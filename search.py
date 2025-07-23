@@ -174,7 +174,7 @@ def main():
     print("=" * 50)
     
     try:
-        searcher = ImageSearcher()
+        searcher = ImageSearcher(embeddings_file="embedding_dynamic_weight_details.json")
         
         # 利用可能な画像を表示
         searcher.show_available_images()

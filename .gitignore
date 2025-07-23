@@ -12,4 +12,6 @@ wheels/
 images/*
 .env
 
-embeddings.json
+embedding*.json
+credentials.json
+token.json
