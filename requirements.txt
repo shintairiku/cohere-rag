@@ -1,0 +1,17 @@
+# requirements.txt
+
+# Cohere API
+cohere
+
+# Google Cloud Libraries
+google-cloud-storage
+google-cloud-alloydb-connector[pg8000] # pg8000ドライバーを含む
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+# Image Processing
+Pillow
+
+# Vector Math
+numpy

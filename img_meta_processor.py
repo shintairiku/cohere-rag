@@ -224,24 +224,6 @@ class ImageProcessor:
         # ファイルパスを検索クエリ化
         # 例: images/details/sample.png → 'images details sample.png'
         meta_vec = self.get_meta_embedding(image_path)
-        # path_parts = list(image_path.parts)
-        # if len(path_parts) > 1:
-        #     # 拡張子付きファイル名はそのまま
-        #     query_str = ' '.join(path_parts[:-1] + [image_path.name])
-        # else:
-        #     query_str = image_path.name
-        # # テキストベクトル（検索クエリとして）
-        # try:
-        #     response = self.client.embed(
-        #         model="embed-v4.0",
-        #         texts=[query_str],
-        #         input_type="search_query",
-        #         embedding_types=["float"]
-        #     )
-        #     meta_vec = np.array(response.embeddings.float_[0])
-        # except Exception as e:
-        #     print(f"❌ メタデータベクトル生成失敗: {image_path} ({e})")
-        #     return None
         # 合成
         w = np.dot(img_vec, meta_vec) / (np.linalg.norm(img_vec) * np.linalg.norm(meta_vec))
         vec = w * meta_vec + (1.0 - w) * img_vec
