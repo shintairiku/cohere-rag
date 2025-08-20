@@ -9,9 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+
 images/*
 .env
-
-embedding*.json
-credentials.json
-token.json
+*.json
