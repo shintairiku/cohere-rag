@@ -13,7 +13,6 @@ class ImageSearcher:
         - 指定されたJSONファイルから画像埋め込みデータをロードします。
         """
         self.embeddings_file = embeddings_file
-        # self.embedding_file = embeddings_file.split('folders/')[1]
         self.api_key = os.getenv("COHERE_API_KEY")
         
         if not self.api_key:
@@ -92,16 +91,7 @@ class ImageSearcher:
     def random_image_search(self, count: int = 5) -> List[Dict]:
         """
         ランダムに画像を選択して返します。
-        
-        Args:
-            count (int): 取得する画像の件数（デフォルト: 5）
-        
-        Returns:
-            List[Dict]: ランダムに選択された画像データのリスト
-                各辞書には以下のキーが含まれます:
-                - filename: ファイル名
-                - filepath: ファイルパス（Google DriveのファイルID）
-                - file_url: Google Driveの直接リンクURL
+        search_images関数と同じ形式で返すことが重要です。
         """
         if not self.embeddings_data:
             print("⚠️ 埋め込みデータが読み込まれていません。")
@@ -115,17 +105,13 @@ class ImageSearcher:
             # 指定件数分取得（データ数がcountより少ない場合は全データを返す）
             random_results = shuffled_data[:min(count, len(shuffled_data))]
             
-            # 結果を整形してGoogle Driveリンクを追加
+            # search_images関数と完全に同じ形式で結果を整形
             formatted_results = []
             for item in random_results:
-                filepath = item.get("filepath", "")
-                filename = item.get("filename", filepath)
-                
-                # Google DriveのファイルURLを生成してfilepathに設定
-                # file_url = f"https://drive.google.com/file/d/{filepath}" if filepath else ""
                 formatted_results.append({
                     "filename": item.get("filename"),
                     "filepath": item.get("filepath"),
+                    "similarity": 0.0  # ランダム検索では類似度は0.0に固定
                 })
             
             print(f"✅ {len(formatted_results)}件のランダム画像を取得しました。")

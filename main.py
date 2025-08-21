@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
+import traceback
 
 # search.pyからImageSearcherクラスをインポート
 from search import ImageSearcher
@@ -25,16 +26,19 @@ def load_searcher():
     """
     global searcher, startup_error
     try:
+        print("🚀 ImageSearcherを初期化中...")
         searcher = ImageSearcher(embeddings_file="embedding_gdrive_shoken.json")
+        print("✅ ImageSearcherの初期化が完了しました")
     except Exception as e:
         startup_error = str(e)
         print(f"❌ サーバー起動エラー: {startup_error}")
+        traceback.print_exc()
 
 # APIのレスポンスモデルを定義
 class SearchResult(BaseModel):
     filename: Optional[str]
     filepath: Optional[str]
-    similarity: float
+    similarity: Optional[float]
 
 class SearchResponse(BaseModel):
     query: Optional[str]
@@ -58,31 +62,56 @@ def search_images_api(
     - **q**: 検索クエリ (任意)
     - **top_k**: 上位何件の結果を返すか (デフォルト: 5, 最小: 1, 最大: 50)
     """
+    print(f"🔍 API呼び出し - trigger: '{trigger}', q: '{q}', top_k: {top_k}")
+    
     if startup_error:
+        print(f"❌ 起動エラーのため処理を停止: {startup_error}")
         raise HTTPException(status_code=500, detail=f"サーバー起動エラー: {startup_error}")
     if not searcher:
+        print("❌ searcherが初期化されていません")
         raise HTTPException(status_code=500, detail="検索エンジンの初期化に失敗しました。")
     
-    """
-    if not q:
-        raise HTTPException(status_code=400, detail="クエリパラメータ 'q' は必須です。")
-    """
-
-    if trigger == "類似画像検索" and not q:
-        raise HTTPException(status_code=400, detail="類似画像検索にはクエリパラメータ 'q' が必須です。")
-
-    if trigger == "類似画像検索":
-        try:
+    try:
+        if trigger == "類似画像検索":
+            print(f"📊 類似画像検索を実行中...")
             results = searcher.search_images(query=q, top_k=top_k)
+            print(f"✅ 類似画像検索完了: {len(results)}件の結果")
             return {"query": q, "results": results}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")    
-    elif trigger == "ランダム画像検索":
-        try:
+            
+        elif trigger == "ランダム画像検索":
+            print(f"🎲 ランダム画像検索を実行中...")
             results = searcher.random_image_search(count=top_k)
-            return {"query": q, "results": results}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")    
+            print(f"✅ ランダム画像検索完了: {len(results)}件の結果")
+            
+            # 結果の構造をログ出力してデバッグ
+            if results:
+                print(f"🔍 最初の結果のキー: {list(results[0].keys())}")
+                print(f"🔍 最初の結果: {results[0]}")
+            
+            return {"query": "ランダム検索", "results": results}
+        else:
+            print(f"❌ 無効なトリガー: {trigger}")
+            raise HTTPException(status_code=400, detail=f"無効なトリガー: {trigger}")
+            
+    except Exception as e:
+        print(f"❌ 検索エラー発生:")
+        print(f"   - trigger: {trigger}")
+        print(f"   - query: {q}")
+        print(f"   - error: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")
+
+@app.get("/health")
+def health_check():
+    """サービスの状態を確認するためのヘルスチェックエンドポイント"""
+    if startup_error:
+        return {"status": "error", "error": startup_error}
+    if not searcher:
+        return {"status": "error", "error": "検索エンジンが初期化されていません"}
+    return {
+        "status": "ok", 
+        "embeddings_count": len(searcher.embeddings_data) if searcher.embeddings_data else 0
+    }
 
 # uvicornで実行するための設定（ローカルテスト用）
 if __name__ == "__main__":
