@@ -49,7 +49,7 @@ def read_root():
 
 @app.get("/search", response_model=SearchResponse)
 def search_images_api(
-    q: str = Query(..., description="検索したい画像の自然言語クエリ (例: モダンなリビング)"),
+    q: Optional[str] = Query(None, description="検索したい画像の自然言語クエリ (例: モダンなリビング)"),
     top_k: int = Query(5, ge=1, le=50, description="取得する検索結果の数"),
     trigger: str = Query(..., description="トリガー名 (例: 類似画像検索)"),
 ):
