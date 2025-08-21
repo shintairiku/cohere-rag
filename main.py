@@ -62,10 +62,11 @@ def search_images_api(
         raise HTTPException(status_code=500, detail=f"サーバー起動エラー: {startup_error}")
     if not searcher:
         raise HTTPException(status_code=500, detail="検索エンジンの初期化に失敗しました。")
-
+    """
     if not q:
         raise HTTPException(status_code=400, detail="クエリパラメータ 'q' は必須です。")
-
+    """
+    
     if trigger == "類似画像検索":
         try:
             results = searcher.search_images(query=q, top_k=top_k)
