@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 # search.pyからImageSearcherクラスをインポート
-from search import ImageSearcher 
+from search import ImageSearcher
 
 # FastAPIアプリケーションのインスタンスを作成
 app = FastAPI(
@@ -37,7 +37,7 @@ class SearchResult(BaseModel):
     similarity: float
 
 class SearchResponse(BaseModel):
-    query: str
+    query: Optional[str]
     results: List[SearchResult]
 
 @app.get("/")
@@ -50,11 +50,12 @@ def read_root():
 @app.get("/search", response_model=SearchResponse)
 def search_images_api(
     q: str = Query(..., description="検索したい画像の自然言語クエリ (例: モダンなリビング)"),
-    top_k: int = Query(5, ge=1, le=50, description="取得する検索結果の数")
+    top_k: int = Query(5, ge=1, le=50, description="取得する検索結果の数"),
+    trigger: str = Query(..., description="トリガー名 (例: 類似画像検索)"),
 ):
     """
     自然言語クエリで画像を検索します。
-    - **q**: 検索クエリ (必須)
+    - **q**: 検索クエリ (任意)
     - **top_k**: 上位何件の結果を返すか (デフォルト: 5, 最小: 1, 最大: 50)
     """
     if startup_error:
@@ -65,11 +66,18 @@ def search_images_api(
     if not q:
         raise HTTPException(status_code=400, detail="クエリパラメータ 'q' は必須です。")
 
-    try:
-        results = searcher.search_images(query=q, top_k=top_k)
-        return {"query": q, "results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")
+    if trigger == "類似画像検索":
+        try:
+            results = searcher.search_images(query=q, top_k=top_k)
+            return {"query": q, "results": results}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")    
+    elif trigger == "ランダム画像検索":
+        try:
+            results = searcher.random_image_search(count=top_k)
+            return {"query": q, "results": results}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"検索中に予期せぬエラーが発生しました: {str(e)}")    
 
 # uvicornで実行するための設定（ローカルテスト用）
 if __name__ == "__main__":
