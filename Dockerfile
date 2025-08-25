@@ -35,10 +35,6 @@ COPY uv.lock* ./
 #     bash -c 'test -f uv.lock && /root/.local/bin/uv sync --frozen --no-dev || /root/.local/bin/uv sync --no-dev'
 RUN bash -c 'test -f uv.lock && /root/.local/bin/uv sync --frozen --no-dev || /root/.local/bin/uv sync --no-dev'
 
-# .envファイルとサービスアカウントキーファイルを先にコピー
-COPY .env ./
-COPY marketing-automation-461305-2acf4965e0b0.json ./
-
 # アプリ本体
 COPY . .
 
