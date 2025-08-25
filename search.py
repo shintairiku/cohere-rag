@@ -27,7 +27,7 @@ class ImageSearcher:
         
         # GCSとCohereのクライアントを初期化
         self.storage_client = storage.Client()
-        self.client = cohere.Client(api_key=self.api_key) 
+        self.client = cohere.Client(api_key=self.api_key)
         self.embeddings_data = []
         
         self.load_embeddings_from_gcs() # GCSから読み込むメソッドを呼び出し

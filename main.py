@@ -3,6 +3,8 @@ from fastapi import FastAPI, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 import traceback
+from dotenv import load_dotenv
+load_dotenv()
 
 # search.pyからImageSearcherクラスをインポート
 from search import ImageSearcher
@@ -27,7 +29,14 @@ def load_searcher():
     global searcher, startup_error
     try:
         print("🚀 ImageSearcherを初期化中...")
-        searcher = ImageSearcher(embeddings_file="embedding_gdrive_shoken.json")
+        # GCSバケット名を環境変数から取得（デフォルト値も設定）
+        bucket_name = os.getenv("GCS_BUCKET_NAME", "embedding_storage")
+        embeddings_file = "embedding_gdrive_shoken.json"
+        
+        print(f"📦 GCSバケット: {bucket_name}")
+        print(f"📄 埋め込みファイル: {embeddings_file}")
+        
+        searcher = ImageSearcher(bucket_name=bucket_name, embeddings_file=embeddings_file)
         print("✅ ImageSearcherの初期化が完了しました")
     except Exception as e:
         startup_error = str(e)

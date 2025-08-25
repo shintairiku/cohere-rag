@@ -10,7 +10,9 @@ ENV PYTHONUNBUFFERED=1 \
     # uv & venv を PATH に通す
     PATH="/app/.venv/bin:/root/.local/bin:$PATH" \
     # コンテナでのリンク問題を避ける
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    # Google Cloud認証キーファイルのパス
+    GOOGLE_APPLICATION_CREDENTIALS=/app/marketing-automation-461305-2acf4965e0b0.json
 
 # 必要最低限のツール（uvインストール用）
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,6 +34,10 @@ COPY uv.lock* ./
 # RUN --mount=type=cache,target=/root/.cache/uv \
 #     bash -c 'test -f uv.lock && /root/.local/bin/uv sync --frozen --no-dev || /root/.local/bin/uv sync --no-dev'
 RUN bash -c 'test -f uv.lock && /root/.local/bin/uv sync --frozen --no-dev || /root/.local/bin/uv sync --no-dev'
+
+# .envファイルとサービスアカウントキーファイルを先にコピー
+COPY .env ./
+COPY marketing-automation-461305-2acf4965e0b0.json ./
 
 # アプリ本体
 COPY . .
