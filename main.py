@@ -29,12 +29,18 @@ def load_searcher():
     global searcher, startup_error
     try:
         print("🚀 ImageSearcherを初期化中...")
-        # GCSバケット名を環境変数から取得（デフォルト値も設定）
+        
+        # 環境判定
+        environment = os.getenv("ENVIRONMENT", "local")
+        print(f"🔧 実行環境: {environment}")
+        
+        # GCS設定
         bucket_name = os.getenv("GCS_BUCKET_NAME", "embedding_storage")
         embeddings_file = "embedding_gdrive_shoken.json"
         
         print(f"📦 GCSバケット: {bucket_name}")
         print(f"📄 埋め込みファイル: {embeddings_file}")
+        print(f"🌍 認証方式: {'Cloud Runサービスアカウント' if environment == 'production' else 'サービスアカウントキーファイル'}")
         
         searcher = ImageSearcher(bucket_name=bucket_name, embeddings_file=embeddings_file)
         print("✅ ImageSearcherの初期化が完了しました")

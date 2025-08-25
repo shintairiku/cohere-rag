@@ -25,8 +25,23 @@ class ImageSearcher:
         if not self.api_key:
             raise ValueError("環境変数 'COHERE_API_KEY' が設定されていません。")
         
-        # GCSとCohereのクライアントを初期化
-        self.storage_client = storage.Client()
+        # 環境に応じた認証方法でGCSクライアントを初期化
+        environment = os.getenv("ENVIRONMENT", "local")
+        
+        if environment == "production":
+            # Cloud Runのデフォルトサービスアカウントを使用
+            print("🌐 プロダクション環境: Cloud Runサービスアカウントで認証")
+            self.storage_client = storage.Client()
+        else:
+            # ローカル環境: サービスアカウントキーファイルを使用
+            print("🏠 ローカル環境: サービスアカウントキーファイルで認証")
+            key_file = "marketing-automation-461305-2acf4965e0b0.json"
+            if os.path.exists(key_file):
+                self.storage_client = storage.Client.from_service_account_json(key_file)
+            else:
+                print("⚠️ キーファイルが見つからません。デフォルト認証を使用します。")
+                self.storage_client = storage.Client()
+        
         self.client = cohere.Client(api_key=self.api_key)
         self.embeddings_data = []
         

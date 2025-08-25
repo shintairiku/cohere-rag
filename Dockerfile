@@ -10,9 +10,9 @@ ENV PYTHONUNBUFFERED=1 \
     # uv & venv を PATH に通す
     PATH="/app/.venv/bin:/root/.local/bin:$PATH" \
     # コンテナでのリンク問題を避ける
-    UV_LINK_MODE=copy \
-    # Google Cloud認証キーファイルのパス
-    GOOGLE_APPLICATION_CREDENTIALS=/app/marketing-automation-461305-2acf4965e0b0.json
+    UV_LINK_MODE=copy
+# 注意: GOOGLE_APPLICATION_CREDENTIALSは実行時に環境変数で制御
+# ローカル環境ではキーファイル、プロダクション（Cloud Run）ではサービスアカウント認証を使用
 
 # 必要最低限のツール（uvインストール用）
 RUN apt-get update && apt-get install -y --no-install-recommends \
