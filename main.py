@@ -24,6 +24,7 @@ app = FastAPI(
 # --- 設定項目 ---
 # SERVICE_ACCOUNT_FILE は不要になったため削除
 SPREADSHEET_NAME = '類似画像検索（統合版）'
+SPREADSHEET_ID = '1DEGQefuNWfivae9VfyNLjhrhVaSy9JwWWdI7Gx3M26s'
 COMPANY_LIST_SHEET_NAME = '会社一覧'
 VECTOR_DATA_DIR = 'vector_data'  # ローカル保存用ディレクトリ
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME") # GCSバケット名
@@ -105,7 +106,7 @@ async def vectorize_company_images(
         process_company_by_uuid,
         uuid_to_process=target_uuid,
         # service_account_file は不要になったため削除
-        spreadsheet_name=SPREADSHEET_NAME,
+        spreadsheet_id=SPREADSHEET_ID,
         sheet_name=COMPANY_LIST_SHEET_NAME,
         output_dir=VECTOR_DATA_DIR
     )

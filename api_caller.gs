@@ -1,208 +1,279 @@
-//Triggers.gs
-
-/**
- * @fileoverview Cloud Runでデプロイした画像検索APIをGoogleスプレッドシートから呼び出すスクリプト
- */
-
-// --- 設定 ---
-// const CLOUD_RUN_URL = "https://image-search-service-742231208085.asia-northeast1.run.app";
-const CLOUD_RUN_URL = "https://cohere-rag-742231208085.asia-northeast1.run.app";
-const COLUMN_QUERY = 1;          // A列: 検索クエリ
-const COLUMN_TRIGGER = 3;        // C列: 実行トリガー（プルダウン）
-const COLUMN_RESULT_START = 4;   // D列: 最初の結果出力先
-const TRIGGER_TEXT_SIMILAR = "類似画像検索";
-const TRIGGER_TEXT_RANDOM = "ランダム画像検索";
-const TRIGGER_TEXT_NOT_EXECUTED = "未実行"; // ★「未実行」の選択肢を追加
-// --- 設定ここまで ---
-
-
-/**
- * スプレッドシートが編集されたときにトリガーによって呼び出されるメイン関数 (★★ この関数を修正しました ★★)
- * @param {Object} e - イベントオブジェクト
- */
-function handleSheetEdit(e) {
-  const sheet = e.source.getActiveSheet();
-  const range = e.range;
-
-  // C列以外が編集された場合は何もしない
-  if (range.getColumn() !== COLUMN_TRIGGER) {
-    return;
-  }
-  
-  const editedValue = e.value;
-  const editedRow = range.getRow();
-
-  if (editedValue === TRIGGER_TEXT_NOT_EXECUTED) {
-    // 以前の結果だけをクリアして、処理を終了する
-    clearPreviousResults(sheet, editedRow);
-    return; // API呼び出しは行わない
-  }
-  
-  // 「未実行」以外が選択された場合は、APIを呼び出す
-  performSearch(sheet, editedRow, editedValue);
-}
-
-/**
- * 以前の検索結果をクリアする共通関数
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象シート
- * @param {number} row - 対象行
- */
-function clearPreviousResults(sheet, row) {
-  const resultRange = sheet.getRange(row, COLUMN_RESULT_START, 1, 15);
-  resultRange.clearContent(); 
-}
-
-/**
- * 検索を実行する (以前のperformSimilarSearchから名前を変更)
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象シート
- * @param {number} row - 対象行
- * @param {string} value - トリガーの値
- */
-function performSearch(sheet, row, value) {
-  const statusCell = sheet.getRange(row, COLUMN_TRIGGER);
-  const query = sheet.getRange(row, COLUMN_QUERY).getValue();
-  
-  if (value === TRIGGER_TEXT_SIMILAR && !query) {
-    statusCell.setValue("エラー: クエリが空です");
-    return;
-  }
-  
-  clearPreviousResults(sheet, row);
-  statusCell.setValue("検索中...");
-  SpreadsheetApp.flush();
-
-  try {
-    const apiUrl = `${CLOUD_RUN_URL}/search?q=${encodeURIComponent(query)}&top_k=5&trigger=${encodeURIComponent(value)}`;
-    const response = UrlFetchApp.fetch(apiUrl, {'muteHttpExceptions': true});
-    const responseCode = response.getResponseCode();
-    const responseText = response.getContentText();
-
-    if (responseCode === 200) {
-      const jsonResponse = JSON.parse(responseText);
-      const results = jsonResponse.results;
-      
-      if (results && results.length > 0) {
-        statusCell.setValue("実行完了");
-        const isRandom = (value === TRIGGER_TEXT_RANDOM);
-        writeResultsToSheet(sheet, row, results, isRandom);
-      } else {
-        statusCell.setValue("結果なし");
-      }
-    } else {
-      statusCell.setValue(`APIエラー(${responseCode})`);
-      Logger.log(`API Error Response: ${responseText}`);
-    }
-  } catch (error) {
-    statusCell.setValue("スクリプトエラー");
-    Logger.log(`[performSearch] Error: ${error.toString()}`);
-  }
-}
-
-/**
- * APIから取得した結果をシートに書き込む共通関数
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象シート
- * @param {number} row - 対象行
- * @param {Array<Object>} results - APIからの結果配列
- * @param {boolean} isRandom - ランダム検索かどうか
- */
-function writeResultsToSheet(sheet, row, results, isRandom) {
-  results.forEach((result, i) => {
-    const imagePathCell = sheet.getRange(row, COLUMN_RESULT_START + (i * 3));
-    
-    const fileUrl = result.filepath; 
-    const displayText = result.filename || fileUrl;
-    
-    const richText = SpreadsheetApp.newRichTextValue()
-      .setText(displayText)
-      .setLinkUrl(fileUrl)
-      .build();
-      
-    imagePathCell.setRichTextValue(richText);
-
-    if (!isRandom) {
-      const similarityCell = sheet.getRange(row, COLUMN_RESULT_START + 1 + (i * 3));
-      similarityCell.setValue(result.similarity.toFixed(4));
-    }
-  });
-}
-
 /**
  * @OnlyCurrentDoc
  *
- * スプレッドシートが編集されたときに自動的に実行されるトリガー。
- * B列（会社名）に値が入力され、かつA列（uuid）が空の場合にUUIDを自動生成します。
+ * このスクリプトは、スプレッドシートから画像検索APIを呼び出すためのものです。
+ * 検索は各企業シートのC列「実行状況」の値を変更することでトリガーされます。
+ * UUIDの自動生成やベクトル化の呼び出し機能も含まれています。
  */
-function onEdit(e) {
-  const sheetName = "会社一覧"; // 対象のシート名
-  const companyColumn = 2;   // 監視する列（B列: 会社名）
-  const uuidColumn = 1;      // UUIDを書き込む列（A列）
 
-  const range = e.range;
-  const sheet = range.getSheet();
+// --- 設定項目 ---
+// ご自身のCloud RunサービスのURLに書き換えてください (末尾に / は不要です)
+const API_BASE_URL = "https://cohere-rag-742231208085.asia-northeast1.run.app"; 
 
-  // 編集されたシートが対象か、編集が単一セルか、対象列かを確認
-  if (sheet.getName() === sheetName && range.getNumColumns() === 1 && range.getColumn() === companyColumn) {
-    const editedRow = range.getRow();
-    // ヘッダー行（1行目）は無視
-    if (editedRow > 1) {
-      const companyName = range.getValue();
-      const uuidCell = sheet.getRange(editedRow, uuidColumn);
+const COMPANY_LIST_SHEET_NAME = "会社一覧";
 
-      // 会社名が入力されていて、かつUUIDセルがまだ空の場合のみUUIDを生成
-      if (companyName && uuidCell.isBlank()) {
-        const newUuid = Utilities.getUuid();
-        uuidCell.setValue(newUuid);
-      }
-    }
-  }
-}
+// 検索シート用の設定
+const COLUMN_QUERY = 1;          // A列: 検索クエリ
+const COLUMN_TRIGGER = 3;        // C列: 実行状況（トリガー）
+const COLUMN_RESULT_START = 4;   // D列: 結果出力の開始列
+
+const TRIGGER_TEXT_SIMILAR = "類似画像検索";
+const TRIGGER_TEXT_RANDOM = "ランダム画像検索";
+const TRIGGER_TEXT_NOT_EXECUTED = "未実行";
+const STATUS_TEXT_EXECUTING = "検索中...";
+const STATUS_TEXT_COMPLETE = "実行完了";
+// --- 設定項目ここまで ---
+
 
 /**
- * スプレッドシートを開いたときにカスタムメニューを追加する関数。
+ * スプレッドシートを開いたときにカスタムメニューを追加します。
+ * 検索実行はonEditトリガーに変更したため、メニューからは削除しました。
  */
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('カスタムメニュー')
-    .addItem('空のUUIDを一括生成', 'fillEmptyUuids')
+    .createMenu('✨画像検索メニュー')
+    .addItem('1. 選択行の会社の画像をベクトル化', 'callVectorizeApiForSelectedRow')
+    .addSeparator()
+    .addItem('（管理者用）空のUUIDを一括生成', 'fillEmptyUuids')
     .addToUi();
 }
 
 /**
- * 「会社一覧」シートにあるデータのうち、会社名が入力済みでUUIDが空の行すべてにUUIDを生成する関数。
- * メニューから手動で実行します。
+ * スプレッドシートが編集されたときに自動実行される関数。
+ * 編集内容に応じて、UUID生成または画像検索を実行します。
+ * @param {Object} e - イベントオブジェクト
  */
-function fillEmptyUuids() {
-  const sheetName = "会社一覧";
-  const ui = SpreadsheetApp.getUi();
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
-  
-  if (!sheet) {
-    ui.alert(`シート "${sheetName}" が見つかりません。`);
-    return;
+function onEdit(e) {
+  const sheet = e.source.getActiveSheet();
+  const range = e.range;
+  const sheetName = sheet.getName();
+
+  // --- ルート1: 「会社一覧」シートでのUUID自動生成 ---
+  if (sheetName === COMPANY_LIST_SHEET_NAME && range.getColumn() === 2 && range.getRow() > 1) {
+    const companyName = range.getValue();
+    const uuidCell = sheet.getRange(range.getRow(), 1);
+    if (companyName && uuidCell.isBlank()) {
+      uuidCell.setValue(Utilities.getUuid());
+    }
+    return; // UUID生成後は処理を終了
   }
 
-  const uuidColumn = 1;   // A列
-  const companyColumn = 2; // B列
+  // --- ルート2: 企業別シートでの検索トリガー ---
+  if (sheetName !== COMPANY_LIST_SHEET_NAME && range.getColumn() === COLUMN_TRIGGER && range.getRow() > 1) {
+    const triggerValue = e.value;
+    const row = range.getRow();
+
+    // 「未実行」が選択された場合は結果をクリアして終了
+    if (triggerValue === TRIGGER_TEXT_NOT_EXECUTED) {
+      clearPreviousResults(sheet, row);
+      return;
+    }
+    
+    // それ以外のトリガーテキストが選択された場合
+    if (triggerValue === TRIGGER_TEXT_SIMILAR || triggerValue === TRIGGER_TEXT_RANDOM) {
+      performSearch(sheet, row, triggerValue);
+    }
+  }
+}
+
+/**
+ * 以前の検索結果をクリアする関数
+ */
+function clearPreviousResults(sheet, row) {
+  sheet.getRange(row, COLUMN_RESULT_START, 1, 15).clearContent();
+}
+
+/**
+ * APIを呼び出して検索を実行する関数
+ */
+function performSearch(sheet, row, trigger) {
+  const statusCell = sheet.getRange(row, COLUMN_TRIGGER);
+  const query = sheet.getRange(row, COLUMN_QUERY).getValue();
+  
+  // 類似画像検索でクエリが空の場合はエラー
+  if (trigger === TRIGGER_TEXT_SIMILAR && !query) {
+    statusCell.setValue("エラー: クエリが空です");
+    return;
+  }
+  
+  clearPreviousResults(sheet, row);
+  statusCell.setValue(STATUS_TEXT_EXECUTING);
+  SpreadsheetApp.flush();
+
+  try {
+    const uuid = getUuidForSheet(sheet);
+    if (!uuid) {
+      throw new Error("このシートに対応する企業が見つかりません。");
+    }
+
+    const results = callSearchApi(uuid, query, trigger);
+    
+    if (results && results.length > 0) {
+      writeResultsToSheet(sheet, row, results);
+      statusCell.setValue(STATUS_TEXT_COMPLETE);
+    } else {
+      statusCell.setValue("結果なし");
+    }
+  } catch (e) {
+    statusCell.setValue(`エラー: ${e.message.substring(0, 100)}`);
+    Logger.log(`[performSearch] Error: ${e.toString()}`);
+  }
+}
+
+/**
+ * APIから取得した結果をシートに書き込む関数
+ */
+function writeResultsToSheet(sheet, row, results) {
+  const isRandom = (sheet.getRange(row, COLUMN_TRIGGER).getValue() === TRIGGER_TEXT_RANDOM);
+  const outputRow = [];
+
+  for (let i = 0; i < 5; i++) {
+    if (results[i]) {
+      const fileUrl = results[i].filepath;
+      const displayText = results[i].filename || fileUrl;
+      const richText = SpreadsheetApp.newRichTextValue().setText(displayText).setLinkUrl(fileUrl).build();
+      
+      // 画像パス(リッチテキスト), 類似度, 使用チェック(FALSE)
+      outputRow.push(richText);
+      outputRow.push(isRandom ? "" : results[i].similarity.toFixed(4));
+      outputRow.push(false);
+    } else {
+      outputRow.push("", "", "");
+    }
+  }
+  // D列から15列分 (3列 * 5件) の範囲に結果を書き込み
+  sheet.getRange(row, COLUMN_RESULT_START, 1, 15).setValues([outputRow]);
+}
+
+
+/**
+ * searchエンドポイントを呼び出すコア関数。
+ */
+function callSearchApi(uuid, query, trigger) {
+  const topK = 5;
+  const url = `${API_BASE_URL}/search?uuid=${encodeURIComponent(uuid)}&q=${encodeURIComponent(query)}&top_k=${topK}&trigger=${encodeURIComponent(trigger)}`;
+  
+  const options = {
+    method: 'get',
+    muteHttpExceptions: true
+  };
+
+  Logger.log(`Requesting to ${url}`);
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  const responseBody = response.getContentText();
+  Logger.log(`Response Code: ${responseCode}`);
+
+  if (responseCode === 200) {
+    const json = JSON.parse(responseBody);
+    return json.results || [];
+  } else {
+    throw new Error(`APIリクエスト失敗 (HTTP ${responseCode})`);
+  }
+}
+
+
+/**
+ * メニューから「ベクトル化」が選択されたときに実行される関数。
+ */
+function callVectorizeApiForSelectedRow() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() !== COMPANY_LIST_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert(`この操作は「${COMPANY_LIST_SHEET_NAME}」シートでのみ実行できます。`);
+    return;
+  }
+  const activeCell = sheet.getActiveCell();
+  const activeRow = activeCell.getRow();
+  if (activeRow < 2) {
+    SpreadsheetApp.getUi().alert("ヘッダー行より下の、対象の会社の行を選択してください。");
+    return;
+  }
+  const uuid = sheet.getRange(activeRow, 1).getValue();
+  if (!uuid) {
+    SpreadsheetApp.getUi().alert("選択された行にUUIDが見つかりません。先にUUIDを生成してください。");
+    return;
+  }
+  const companyName = sheet.getRange(activeRow, 2).getValue();
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(`「${companyName}」の画像のベクトル化を開始しますか？`, ui.ButtonSet.YES_NO);
+
+  if (response == ui.Button.YES) {
+    try {
+      callVectorizeApi(uuid);
+      ui.alert(`「${companyName}」のベクトル化処理を開始しました。\n処理には数分かかる場合があります。`);
+    } catch (e) {
+      Logger.log(e);
+      ui.alert(`API呼び出し中にエラーが発生しました。\n\nエラー内容:\n${e.message}`);
+    }
+  }
+}
+
+/**
+ * vectorizeエンドポイントを呼び出すコア関数。
+ */
+function callVectorizeApi(uuid) {
+  const url = `${API_BASE_URL}/vectorize`;
+  const payload = { uuid: uuid };
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  Logger.log(`Requesting to ${url} with payload: ${JSON.stringify(payload)}`);
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  const responseBody = response.getContentText();
+  Logger.log(`Response Code: ${responseCode}`);
+  Logger.log(`Response Body: ${responseBody}`);
+  if (responseCode !== 202) {
+    throw new Error(`APIリクエストに失敗しました (HTTP ${responseCode}): ${responseBody}`);
+  }
+}
+
+/**
+ * 現在開いているシートに対応する企業のUUIDを「会社一覧」シートから検索して返す。
+ */
+function getUuidForSheet(sheet) {
+  const companyListSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(COMPANY_LIST_SHEET_NAME);
+  if (!companyListSheet) {
+    throw new Error(`「${COMPANY_LIST_SHEET_NAME}」シートが見つかりません。`);
+  }
+  const sheetUrl = SpreadsheetApp.getActiveSpreadsheet().getUrl() + "#gid=" + sheet.getSheetId();
+  const data = companyListSheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const uuid = data[i][0];
+    const companySheetUrl = data[i][3];
+    if (companySheetUrl === sheetUrl) {
+      return uuid;
+    }
+  }
+  return null;
+}
+
+/**
+ * メニューから手動で空のUUIDをすべて埋める関数。
+ */
+function fillEmptyUuids() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(COMPANY_LIST_SHEET_NAME);
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert(`シート "${COMPANY_LIST_SHEET_NAME}" が見つかりません。`);
+    return;
+  }
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
-
   let updatedCount = 0;
-  // ヘッダー行をスキップしてループ (i=1から)
   for (let i = 1; i < values.length; i++) {
-    const uuid = values[i][uuidColumn - 1];
-    const companyName = values[i][companyColumn - 1];
-
-    // 会社名の列に値があり、かつUUIDの列が空の場合
+    const uuid = values[i][0];
+    const companyName = values[i][1];
     if (companyName && !uuid) {
-      const newUuid = Utilities.getUuid();
-      sheet.getRange(i + 1, uuidColumn).setValue(newUuid); // getRangeは1から始まるため i + 1
+      sheet.getRange(i + 1, 1).setValue(Utilities.getUuid());
       updatedCount++;
     }
   }
-  
   if (updatedCount > 0) {
-    ui.alert(`${updatedCount}件のUUIDを生成しました。`);
+    SpreadsheetApp.getUi().alert(`${updatedCount}件のUUIDを生成しました。`);
   } else {
-    ui.alert('UUIDが空の行は見つかりませんでした。');
+    SpreadsheetApp.getUi().alert('UUIDが空の行は見つかりませんでした。');
   }
 }

@@ -243,12 +243,12 @@ class ImageProcessor:
             except Exception as e:
                 print(f"❌ ローカルへの保存エラー: {e}")
 
-def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str, credentials) -> Optional[pd.DataFrame]:
-    print(f"🔄 スプレッドシート '{spreadsheet_name}' ({sheet_name}) を読み込んでいます...")
+def get_spreadsheet_data(spreadsheet_id: str, sheet_name: str, credentials) -> Optional[pd.DataFrame]:
+    print(f"🔄 スプレッドシート ID '{spreadsheet_id}' ({sheet_name}) を読み込んでいます...")
     try:
         # --- 引数で渡された認証情報を使用 ---
         gc = gspread.authorize(credentials)
-        spreadsheet = gc.open(spreadsheet_name)
+        spreadsheet = gc.open_by_key(spreadsheet_id)
         sheet = spreadsheet.worksheet(sheet_name)
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
@@ -259,7 +259,7 @@ def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str, credentials) ->
         traceback.print_exc()
         return None
 
-def process_company_by_uuid(uuid_to_process: str, spreadsheet_name: str, sheet_name: str, output_dir: str):
+def process_company_by_uuid(uuid_to_process: str, spreadsheet_id: str, sheet_name: str, output_dir: str):
     print(f"🚀 ベクトル化処理開始: UUID = {uuid_to_process}")
     
     try:
@@ -271,7 +271,7 @@ def process_company_by_uuid(uuid_to_process: str, spreadsheet_name: str, sheet_n
             print(f"📂 出力ディレクトリ '{output_dir}' を作成しました。")
         
         # --- 生成した認証情報を渡す ---
-        company_df = get_spreadsheet_data(spreadsheet_name, sheet_name, credentials=credentials)
+        company_df = get_spreadsheet_data(spreadsheet_id, sheet_name, credentials=credentials)
         if company_df is None:
             print(f"❌ 処理中断: スプレッドシートのデータを取得できませんでした。")
             return
