@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from PIL import Image
 from google.cloud import storage
 
-# --- 認証ライブラリの変更 ---
+# --- 認証ライブラリ ---
 import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -23,35 +23,38 @@ from googleapiclient.http import MediaIoBaseDownload
 
 load_dotenv()
 
-# --- ここから新規追加 ---
-def _get_google_credentials(scopes: List[str]):
+# --- スコープを1箇所に統合 ---
+# アプリケーションで必要な全ての権限をここに定義します
+SCOPES = [
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/spreadsheets.readonly'
+]
+
+def _get_google_credentials():
     """
     環境に応じて適切なGoogle認証情報を取得するヘルパー関数。
-    ENVIRONMENT=production の場合はADCを、それ以外はキーファイルを探す。
+    統合されたSCOPESを使用します。
     """
     environment = os.getenv("ENVIRONMENT", "local")
-    # ローカル開発で使用するサービスアカウントキーファイル
     key_file = "marketing-automation-461305-2acf4965e0b0.json"
 
     if environment == "production":
         print("🌐 プロダクション環境: Application Default Credentials を使用します。")
-        creds, _ = google.auth.default(scopes=scopes)
+        creds, _ = google.auth.default(scopes=SCOPES)
         return creds
     else:
         print(f"🏠 ローカル環境: '{key_file}' を探しています...")
         if os.path.exists(key_file):
             print(f"   ✅ キーファイル '{key_file}' を使用して認証します。")
-            return service_account.Credentials.from_service_account_file(key_file, scopes=scopes)
+            return service_account.Credentials.from_service_account_file(key_file, scopes=SCOPES)
         else:
             print(f"   ⚠️ キーファイルが見つかりません。Application Default Credentials にフォールバックします。")
-            print(f"   ヒント: ローカルで実行するには `gcloud auth application-default login` を実行してください。")
-            creds, _ = google.auth.default(scopes=scopes)
+            creds, _ = google.auth.default(scopes=SCOPES)
             return creds
-# --- ここまで新規追加 ---
 
 
 class ImageProcessor:
-    def __init__(self, drive_folder_id_or_url: str, embeddings_file: str):
+    def __init__(self, drive_folder_id_or_url: str, embeddings_file: str, credentials):
         self.drive_folder_id = self._extract_folder_id(drive_folder_id_or_url)
         if not self.drive_folder_id:
             raise ValueError(f"無効なGoogle DriveフォルダIDまたはURLです: {drive_folder_id_or_url}")
@@ -65,8 +68,8 @@ class ImageProcessor:
         
         self.client = cohere.Client(self.api_key)
         
-        # --- 認証方法をヘルパー関数経由に変更 ---
-        self.creds = _get_google_credentials(scopes=['https://www.googleapis.com/auth/drive.readonly'])
+        # --- 引数で渡された認証情報を使用 ---
+        self.creds = credentials
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         
         self.processed_images: Set[str] = set()
@@ -235,12 +238,11 @@ class ImageProcessor:
             except Exception as e:
                 print(f"❌ ローカルへの保存エラー: {e}")
 
-def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str) -> Optional[pd.DataFrame]:
+def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str, credentials) -> Optional[pd.DataFrame]:
     print(f"🔄 スプレッドシート '{spreadsheet_name}' ({sheet_name}) を読み込んでいます...")
     try:
-        # --- 認証方法をヘルパー関数経由に変更 ---
-        creds = _get_google_credentials(scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
-        gc = gspread.authorize(creds)
+        # --- 引数で渡された認証情報を使用 ---
+        gc = gspread.authorize(credentials)
         spreadsheet = gc.open(spreadsheet_name)
         sheet = spreadsheet.worksheet(sheet_name)
         data = sheet.get_all_records()
@@ -254,32 +256,44 @@ def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str) -> Optional[pd.
 
 def process_company_by_uuid(uuid_to_process: str, spreadsheet_name: str, sheet_name: str, output_dir: str):
     print(f"🚀 ベクトル化処理開始: UUID = {uuid_to_process}")
-    if not os.getenv("GCS_BUCKET_NAME") and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"📂 出力ディレクトリ '{output_dir}' を作成しました。")
-    company_df = get_spreadsheet_data(spreadsheet_name, sheet_name)
-    if company_df is None:
-        print(f"❌ 処理中断: スプレッドシートのデータを取得できませんでした。")
-        return
-    target_row = company_df[company_df['uuid'] == uuid_to_process]
-    if target_row.empty:
-        print(f"❌ 処理中断: UUID '{uuid_to_process}' がスプレッドシートに見つかりません。")
-        return
-    row_data = target_row.iloc[0]
-    company_name = row_data.get('会社名')
-    drive_url = row_data.get('対象のGoogleドライブ')
-    if not all([company_name, drive_url]):
-        print(f"❌ 処理中断: '会社名' または '対象のGoogleドライブ' が空です。")
-        return
-    output_json_path = os.path.join(output_dir, f"{uuid_to_process}.json")
-    print(f"▶️  処理実行: {company_name} (出力先: {output_json_path})")
+    
     try:
+        # --- 認証情報をここで一度だけ生成 ---
+        credentials = _get_google_credentials()
+
+        if not os.getenv("GCS_BUCKET_NAME") and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"📂 出力ディレクトリ '{output_dir}' を作成しました。")
+        
+        # --- 生成した認証情報を渡す ---
+        company_df = get_spreadsheet_data(spreadsheet_name, sheet_name, credentials=credentials)
+        if company_df is None:
+            print(f"❌ 処理中断: スプレッドシートのデータを取得できませんでした。")
+            return
+        
+        target_row = company_df[company_df['uuid'] == uuid_to_process]
+        if target_row.empty:
+            print(f"❌ 処理中断: UUID '{uuid_to_process}' がスプレッドシートに見つかりません。")
+            return
+        
+        row_data = target_row.iloc[0]
+        company_name = row_data.get('会社名')
+        drive_url = row_data.get('対象のGoogleドライブ')
+        if not all([company_name, drive_url]):
+            print(f"❌ 処理中断: '会社名' または '対象のGoogleドライブ' が空です。")
+            return
+        
+        output_json_path = os.path.join(output_dir, f"{uuid_to_process}.json")
+        print(f"▶️  処理実行: {company_name} (出力先: {output_json_path})")
+        
         processor = ImageProcessor(
             drive_folder_id_or_url=drive_url,
             embeddings_file=output_json_path,
+            credentials=credentials # --- 生成した認証情報を渡す ---
         )
         processor.process_drive_images()
         print(f"✅ 処理完了: {company_name} (UUID: {uuid_to_process})")
+
     except Exception as e:
-        print(f"❌ 予期せぬエラーが発生しました ({company_name}): {e}")
+        print(f"❌ 予期せぬエラーが発生しました ({uuid_to_process}): {e}")
         traceback.print_exc()
