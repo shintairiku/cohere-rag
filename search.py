@@ -1,164 +1,122 @@
 import os
 import json
+import traceback
+from typing import List, Dict, Optional
+
 import numpy as np
-import random
-from typing import List, Dict
-import cohere
-from google.cloud import storage # GCSライブラリをインポート
-from dotenv import load_dotenv
-load_dotenv()
+from google.cloud import storage
 
 class ImageSearcher:
-    # GCSバケット名をコンストラクタで受け取るように変更
-    def __init__(self, bucket_name: str, embeddings_file: str = "embedding_gdrive_shoken.json"):
+    """
+    指定された企業のベクトルデータ（JSON）を読み込み、画像検索を実行するクラス。
+    インスタンスは企業（UUID）ごとに生成されることを想定しています。
+    """
+    def __init__(self, uuid: str, embeddings_dir: str = 'vector_data', bucket_name: Optional[str] = None):
         """
-        コンストラクタ
-        - GCSバケット名とファイル名を設定します。
-        - 環境変数からCohere APIキーを読み込みます。
-        - GCSとCohereのクライアントを初期化します。
-        - GCSから画像埋め込みデータをロードします。
+        Args:
+            uuid (str): 検索対象の企業のUUID。
+            embeddings_dir (str): ローカル環境でのベクトルファイルの保存ディレクトリ。
+            bucket_name (Optional[str]): GCSを使用する場合のバケット名。
         """
+        self.uuid = uuid
+        self.embeddings_dir = embeddings_dir
         self.bucket_name = bucket_name
-        self.embeddings_file = embeddings_file # GCS上のファイルパス
-        self.api_key = os.getenv("COHERE_API_KEY")
-        
-        if not self.api_key:
-            raise ValueError("環境変数 'COHERE_API_KEY' が設定されていません。")
-        
-        # 環境に応じた認証方法でGCSクライアントを初期化
-        environment = os.getenv("ENVIRONMENT", "local")
-        
-        if environment == "production":
-            # Cloud Runのデフォルトサービスアカウントを使用
-            print("🌐 プロダクション環境: Cloud Runサービスアカウントで認証")
-            self.storage_client = storage.Client()
-        else:
-            # ローカル環境: サービスアカウントキーファイルを使用
-            print("🏠 ローカル環境: サービスアカウントキーファイルで認証")
-            key_file = "marketing-automation-461305-2acf4965e0b0.json"
-            if os.path.exists(key_file):
-                self.storage_client = storage.Client.from_service_account_json(key_file)
+        self.embeddings_data: List[Dict] = []
+        self.embeddings_matrix: Optional[np.ndarray] = None
+
+        # 初期化時にデータをロード
+        self.load_data()
+
+    def load_data(self):
+        """
+        UUIDに対応するベクトルデータをGCSまたはローカルから読み込む。
+        """
+        filename = f"{self.uuid}.json"
+        print(f"🔄 検索データ '{filename}' を読み込んでいます...")
+
+        try:
+            content = None
+            # GCSバケット名が指定されていればGCSから読み込む
+            if self.bucket_name:
+                client = storage.Client()
+                bucket = client.bucket(self.bucket_name)
+                blob = bucket.blob(filename)
+                if blob.exists():
+                    content = blob.download_as_text()
+                    print(f"☁️ GCSから '{filename}' をダウンロードしました。")
+                else:
+                    raise FileNotFoundError(f"GCSバケット '{self.bucket_name}' に '{filename}' が見つかりません。")
+            # ローカルから読み込む
             else:
-                print("⚠️ キーファイルが見つからません。デフォルト認証を使用します。")
-                self.storage_client = storage.Client()
-        
-        self.client = cohere.Client(api_key=self.api_key)
-        self.embeddings_data = []
-        
-        self.load_embeddings_from_gcs() # GCSから読み込むメソッドを呼び出し
-    
-    def load_embeddings_from_gcs(self):
-        """埋め込みデータをGCS上のJSONファイルから読み込みます。"""
-        try:
-            # GCSバケットとファイル（blob）を取得
-            bucket = self.storage_client.bucket(self.bucket_name)
-            blob = bucket.blob(self.embeddings_file)
+                local_path = os.path.join(self.embeddings_dir, filename)
+                if os.path.exists(local_path):
+                    with open(local_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    print(f"📄 ローカルから '{local_path}' を読み込みました。")
+                else:
+                    raise FileNotFoundError(f"ローカルディレクトリ '{self.embeddings_dir}' に '{filename}' が見つかりません。")
             
-            if not blob.exists():
-                raise FileNotFoundError(f"GCSバケット '{self.bucket_name}' 内に '{self.embeddings_file}' が見つかりません。")
+            self.embeddings_data = json.loads(content)
             
-            print(f"GCSから '{self.embeddings_file}' をダウンロード中...")
-            
-            # ファイルの内容を文字列としてダウンロード
-            json_data = blob.download_as_string()
-            
-            # 文字列をJSONとして解析
-            self.embeddings_data = json.loads(json_data)
-            
-            print(f"✅ GCSから {len(self.embeddings_data)}件の画像埋め込みデータを正常に読み込みました。")
-            
+            # 検索用にベクトルデータをNumpy配列に変換
+            embeddings = [item['embedding'] for item in self.embeddings_data]
+            self.embeddings_matrix = np.array(embeddings, dtype=np.float32)
+            print(f"✅ データ読み込み完了。{len(self.embeddings_data)}件のベクトルをロードしました。")
+
+        except FileNotFoundError as e:
+            print(f"❌ {e}")
+            # エラーを再送出してAPI側でハンドリングできるようにする
+            raise e
         except Exception as e:
-            raise RuntimeError(f"GCSからの埋め込みデータ読み込み中にエラーが発生しました: {e}")
-    
-    def get_text_embedding(self, text: str) -> np.ndarray:
-        """テキストクエリの埋め込みベクトルをCohere APIで生成します。"""
-        try:
-            response = self.client.embed(
-                model="embed-v4.0",
-                texts=[text],
-                input_type="search_query"
-            )
-            embedding = response.embeddings[0]
-            return np.array(embedding)
-        except Exception as e:
-            print(f"❌ テキスト埋め込みの生成中にエラーが発生しました: {e}")
-            return None
-    
-    def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
-        """2つのベクトル間のコサイン類似度を計算します。"""
-        if a.shape != b.shape:
-            raise ValueError(f"ベクトルの次元が一致しません: a.shape={a.shape}, b.shape={b.shape}")
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-    
-    def search_images(self, query: str = "", top_k: int = 5) -> List[Dict]:
-        """自然言語クエリで画像を検索し、類似度が高い上位K件の結果を返します。"""
+            print(f"❌ データの読み込みまたは解析中にエラーが発生しました: {e}")
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to load or parse data for UUID {self.uuid}") from e
+            
+    def search_images(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
+        """
+        クエリベクトルと最も類似度の高い画像を検索する。
+        """
+        if self.embeddings_matrix is None or len(self.embeddings_matrix) == 0:
+            return []
+
+        # コサイン類似度を計算
+        similarities = np.dot(self.embeddings_matrix, query_embedding) / \
+                       (np.linalg.norm(self.embeddings_matrix, axis=1) * np.linalg.norm(query_embedding))
+        
+        # 類似度が高い順にインデックスを取得
+        top_k_indices = np.argsort(similarities)[::-1][:top_k]
+        
+        results = []
+        for i in top_k_indices:
+            result = {
+                "filename": self.embeddings_data[i].get("filename"),
+                "filepath": self.embeddings_data[i].get("filepath"),
+                "similarity": float(similarities[i])
+            }
+            results.append(result)
+            
+        return results
+
+    def random_image_search(self, count: int) -> List[Dict]:
+        """
+        ランダムに画像を抽出する。
+        """
         if not self.embeddings_data:
             return []
         
-        query_embedding = self.get_text_embedding(query)
-        if query_embedding is None:
-            return []
+        # 取得件数がデータ数より多い場合はデータ数に丸める
+        num_to_sample = min(count, len(self.embeddings_data))
         
-        similarities = []
-        for item in self.embeddings_data:
-            image_embedding = np.array(item["embedding"])
-            try:
-                similarity = self.cosine_similarity(query_embedding, image_embedding)
-                similarities.append({
-                    "filename": item.get("filename"),
-                    "filepath": item.get("filepath"),
-                    "similarity": similarity
-                })
-            except ValueError as e:
-                print(f"⚠️ 類似度計算エラー: {item.get('filename')} - {e}")
-                continue
+        # ランダムにインデックスをサンプリング
+        random_indices = np.random.choice(len(self.embeddings_data), num_to_sample, replace=False)
         
-        similarities.sort(key=lambda x: x["similarity"], reverse=True)
-        return similarities[:top_k]
-    
-    def random_image_search(self, count: int = 5) -> List[Dict]:
-        """ランダムに画像を選択して返します。"""
-        if not self.embeddings_data:
-            print("⚠️ 埋め込みデータが読み込まれていません。")
-            return []
-        
-        try:
-            shuffled_data = self.embeddings_data.copy()
-            random.shuffle(shuffled_data)
-            random_results = shuffled_data[:min(count, len(shuffled_data))]
-            formatted_results = []
-            for item in random_results:
-                formatted_results.append({
-                    "filename": item.get("filename"),
-                    "filepath": item.get("filepath"),
-                    "similarity": 0.0
-                })
-            print(f"✅ {len(formatted_results)}件のランダム画像を取得しました。")
-            return formatted_results
-        except Exception as e:
-            print(f"❌ ランダム画像検索中にエラーが発生しました: {e}")
-            return []
-
-# --- 使い方 ---
-if __name__ == '__main__':
-    # GCSのバケット名とJSONファイル名を設定
-    GCS_BUCKET_NAME = "embedding_storage"  # 例: "my-image-embeddings-bucket"
-    EMBEDDINGS_JSON_FILE = "embedding_gdrive_shoken.json" # バケット内のファイルパス
-
-    try:
-        # ImageSearcherのインスタンスを作成
-        searcher = ImageSearcher(bucket_name=GCS_BUCKET_NAME, embeddings_file=EMBEDDINGS_JSON_FILE)
-        
-        # 画像検索の実行
-        search_query = "ライト"
-        results = searcher.search_images(query=search_query, top_k=3)
-        
-        if results:
-            print(f"\n--- 検索結果: '{search_query}' ---")
-            for result in results:
-                print(f"ファイル: {result['filename']}, 類似度: {result['similarity']:.4f}")
-        else:
-            print("検索結果が見つかりませんでした。")
-
-    except Exception as e:
-        print(f"エラーが発生しました: {e}")
+        results = []
+        for i in random_indices:
+            result = {
+                "filename": self.embeddings_data[i].get("filename"),
+                "filepath": self.embeddings_data[i].get("filepath"),
+                "similarity": None  # ランダム検索なので類似度はない
+            }
+            results.append(result)
+            
+        return results

@@ -7,6 +7,7 @@ import os
 import io
 import re
 import base64
+import traceback
 import json
 import hashlib
 from typing import List, Dict, Set
@@ -19,6 +20,7 @@ from PIL import Image
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from google.cloud import storage
 
 load_dotenv()
 
@@ -317,13 +319,44 @@ class ImageProcessor:
             print(f"📊 総画像数: {len(self.embeddings_data)}件")
 
     def save_embeddings(self):
-        """埋め込みデータをJSONファイルに保存"""
-        try:
-            with open(self.embeddings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.embeddings_data, f, ensure_ascii=False, indent=2)
-            print(f"💾 データベースを '{self.embeddings_file}' に保存しました。")
-        except Exception as e:
-            print(f"❌ 保存エラー: {e}")
+        """
+        埋め込みデータをJSONファイルに保存する。
+        環境変数 GCS_BUCKET_NAME が設定されていればGCSに、なければローカルに保存する。
+        """
+        bucket_name = os.getenv("GCS_BUCKET_NAME")
+        # self.embeddings_file には 'vector_data/[uuid].json' のようなパスが入っている
+        # GCSに保存する際はファイル名部分だけを使う
+        destination_blob_name = os.path.basename(self.embeddings_file)
+        
+        # JSONデータを文字列として準備
+        json_data = json.dumps(self.embeddings_data, ensure_ascii=False, indent=2)
+
+        # GCSへのアップロード処理
+        if bucket_name:
+            try:
+                client = storage.Client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(destination_blob_name)
+                
+                blob.upload_from_string(json_data, content_type='application/json')
+                print(f"☁️  データベースをGCSバケット '{bucket_name}' の '{destination_blob_name}' に保存しました。")
+            except Exception as e:
+                print(f"❌ GCSへの保存エラー: {e}")
+                traceback.print_exc()
+        
+        # ローカルへの保存処理 (フォールバックまたは開発用)
+        else:
+            try:
+                # self.embeddings_file のディレクトリ部分が存在するか確認
+                output_dir = os.path.dirname(self.embeddings_file)
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+                    
+                with open(self.embeddings_file, 'w', encoding='utf-8') as f:
+                    f.write(json_data)
+                print(f"💾 データベースをローカルの '{self.embeddings_file}' に保存しました。")
+            except Exception as e:
+                print(f"❌ ローカルへの保存エラー: {e}")
 
 def main():
     DRIVE_FOLDER_ID_OR_URL = "19pF7i9-KrRdyPHAU5ki6f39zG7qLhk1b"  # サンプル

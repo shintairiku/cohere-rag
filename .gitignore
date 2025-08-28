@@ -9,7 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-
+count_img.py
+*.csv
 images/*
 .env
 *.json
