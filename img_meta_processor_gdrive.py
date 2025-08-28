@@ -357,26 +357,51 @@ class ImageProcessor:
                 print(f"💾 データベースをローカルの '{self.embeddings_file}' に保存しました。")
             except Exception as e:
                 print(f"❌ ローカルへの保存エラー: {e}")
+def get_spreadsheet_data(spreadsheet_name: str, sheet_name: str) -> Optional[pd.DataFrame]:
+    print(f"🔄 スプレッドシート '{spreadsheet_name}' ({sheet_name}) を読み込んでいます...")
+    try:
+        # --- 認証方法をADCに変更 ---
+        creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open(spreadsheet_name)
+        sheet = spreadsheet.worksheet(sheet_name)
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        print(f"✅ {len(df)} 件の企業情報を読み込みました。")
+        return df
+    except Exception as e:
+        print(f"❌ スプレッドシートの読み込み中にエラーが発生しました: {e}")
+        traceback.print_exc()
+        return None
 
-def main():
-    DRIVE_FOLDER_ID_OR_URL = "19pF7i9-KrRdyPHAU5ki6f39zG7qLhk1b"  # サンプル
-    DRIVE_FOLDER_ID_OR_URL = "1unmGILSEk0zj0w5izDKoF9-lAmhQjXbC"  # 尚建工務店
-
-    if DRIVE_FOLDER_ID_OR_URL == "YOUR_GOOGLE_DRIVE_FOLDER_ID_OR_URL":
-        print("❌ エラー: `main`関数内の`DRIVE_FOLDER_ID_OR_URL`を実際のIDまたはURLに書き換えてください。")
+def process_company_by_uuid(uuid_to_process: str, spreadsheet_name: str, sheet_name: str, output_dir: str):
+    print(f"🚀 ベクトル化処理開始: UUID = {uuid_to_process}")
+    if not os.getenv("GCS_BUCKET_NAME") and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"📂 出力ディレクトリ '{output_dir}' を作成しました。")
+    company_df = get_spreadsheet_data(spreadsheet_name, sheet_name)
+    if company_df is None:
+        print(f"❌ 処理中断: スプレッドシートのデータを取得できませんでした。")
         return
-
-    print("🖼️  画像処理システム (Google Drive版 - 再帰検索対応)")
-    print("=" * 60)
-    
-    processor = ImageProcessor(
-        drive_folder_id_or_url=DRIVE_FOLDER_ID_OR_URL,
-        embeddings_file="embedding_gdrive_shoken.json"
-    )
-    
-    processor.process_drive_images()
-    
-    print(f"\n✅ 全ての処理が完了しました。")
-
-if __name__ == "__main__":
-    main()
+    target_row = company_df[company_df['uuid'] == uuid_to_process]
+    if target_row.empty:
+        print(f"❌ 処理中断: UUID '{uuid_to_process}' がスプレッドシートに見つかりません。")
+        return
+    row_data = target_row.iloc[0]
+    company_name = row_data.get('会社名')
+    drive_url = row_data.get('対象のGoogleドライブ')
+    if not all([company_name, drive_url]):
+        print(f"❌ 処理中断: '会社名' または '対象のGoogleドライブ' が空です。")
+        return
+    output_json_path = os.path.join(output_dir, f"{uuid_to_process}.json")
+    print(f"▶️  処理実行: {company_name} (出力先: {output_json_path})")
+    try:
+        processor = ImageProcessor(
+            drive_folder_id_or_url=drive_url,
+            embeddings_file=output_json_path,
+        )
+        processor.process_drive_images()
+        print(f"✅ 処理完了: {company_name} (UUID: {uuid_to_process})")
+    except Exception as e:
+        print(f"❌ 予期せぬエラーが発生しました ({company_name}): {e}")
+        traceback.print_exc()
