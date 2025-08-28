@@ -5,12 +5,10 @@ import base64
 import json
 import hashlib
 import traceback
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set
 
 import cohere
-import gspread
 import numpy as np
-import pandas as pd
 from dotenv import load_dotenv
 from PIL import Image
 from google.cloud import storage
@@ -23,37 +21,32 @@ from googleapiclient.http import MediaIoBaseDownload
 
 load_dotenv()
 
-# --- スコープを1箇所に統合 ---
-# アプリケーションで必要な全ての権限をここに定義します
-SCOPES = [
-    'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/spreadsheets.readonly'
-]
+# --- スコープから 'spreadsheets' を削除 ---
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 def _get_google_credentials():
     """
-    環境に応じて適切なGoogle認証情報を取得するヘルパー関数。
-    統合されたSCOPESを使用します。
+    環境に応じてGoogle Drive用の認証情報を取得するヘルパー関数。
     """
     environment = os.getenv("ENVIRONMENT", "local")
     key_file = "marketing-automation-461305-2acf4965e0b0.json"
 
     if environment == "production":
-        print("🌐 プロダクション環境: Application Default Credentials を使用します。")
+        print("🌐 プロダクション環境: ADC を使用します。")
         creds, _ = google.auth.default(scopes=SCOPES)
         return creds
     else:
         print(f"🏠 ローカル環境: '{key_file}' を探しています...")
         if os.path.exists(key_file):
-            print(f"   ✅ キーファイル '{key_file}' を使用して認証します。")
-            return service_account.Credentials.from_service_account_file(key_file, scopes=SCOPES)
+            creds = service_account.Credentials.from_service_account_file(key_file, scopes=SCOPES)
+            return creds
         else:
-            print(f"   ⚠️ キーファイルが見つかりません。Application Default Credentials にフォールバックします。")
+            print(f"   ⚠️ キーファイルが見つかりません。ADC にフォールバックします。")
             creds, _ = google.auth.default(scopes=SCOPES)
             return creds
 
-
 class ImageProcessor:
+    # ... (変更点は __init__ のみ) ...
     def __init__(self, drive_folder_id_or_url: str, embeddings_file: str, credentials):
         self.drive_folder_id = self._extract_folder_id(drive_folder_id_or_url)
         if not self.drive_folder_id:
@@ -68,7 +61,6 @@ class ImageProcessor:
         
         self.client = cohere.Client(self.api_key)
         
-        # --- 引数で渡された認証情報を使用 ---
         self.creds = credentials
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         
@@ -87,7 +79,6 @@ class ImageProcessor:
                 return match.group(1)
         return id_or_url
     
-    # ... (load_existing_data から resize_image_if_needed までは変更なし) ...
     def load_existing_data(self):
         if os.path.exists(self.embeddings_file):
             with open(self.embeddings_file, 'r', encoding='utf-8') as f:
@@ -128,10 +119,8 @@ class ImageProcessor:
             print(f"   ❌ リサイズエラー: {e}")
             return None
 
-    # --- ここから修正 ---
     def get_image_embedding(self, image_data: bytes, filename: str) -> np.ndarray:
         try:
-            # モデル名を 'embed-multilingual-v3.0' に修正
             response = self.client.embed(texts=[filename], model='embed-multilingual-v3.0', input_type="search_document")
             return np.array(response.embeddings[0])
         except Exception as e:
@@ -140,13 +129,11 @@ class ImageProcessor:
 
     def get_meta_embedding(self, filename: str) -> np.ndarray:
         try:
-            # モデル名を 'embed-multilingual-v3.0' に修正
             response = self.client.embed(texts=[filename], model="embed-multilingual-v3.0", input_type="search_query")
             return np.array(response.embeddings[0])
         except Exception as e:
             print(f"❌ メタデータ埋め込み生成エラー ({filename}): {e}")
             return None
-    # --- ここまで修正 ---
 
     def get_weighted_image_and_meta_embedding(self, image_data: bytes, filename: str) -> np.ndarray:
         img_vec = self.get_image_embedding(image_data, filename)
@@ -157,7 +144,6 @@ class ImageProcessor:
         vec = w * meta_vec + (1.0 - w) * img_vec
         return vec
 
-    # ... (get_all_subfolders から process_company_by_uuid までは変更なし) ...
     def get_all_subfolders(self, folder_id: str) -> List[Dict[str, str]]:
         all_folders = [{'id': folder_id, 'name': 'ROOT', 'path': ''}]
         folders_to_check = [{'id': folder_id, 'name': 'ROOT', 'path': ''}]
@@ -243,62 +229,26 @@ class ImageProcessor:
             except Exception as e:
                 print(f"❌ ローカルへの保存エラー: {e}")
 
-def get_spreadsheet_data(spreadsheet_id: str, sheet_name: str, credentials) -> Optional[pd.DataFrame]:
-    print(f"🔄 スプレッドシート ID '{spreadsheet_id}' ({sheet_name}) を読み込んでいます...")
-    try:
-        # --- 引数で渡された認証情報を使用 ---
-        gc = gspread.authorize(credentials)
-        spreadsheet = gc.open_by_key(spreadsheet_id)
-        sheet = spreadsheet.worksheet(sheet_name)
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        print(f"✅ {len(df)} 件の企業情報を読み込みました。")
-        return df
-    except Exception as e:
-        print(f"❌ スプレッドシートの読み込み中にエラーが発生しました: {e}")
-        traceback.print_exc()
-        return None
-
-def process_company_by_uuid(uuid_to_process: str, spreadsheet_id: str, sheet_name: str, output_dir: str):
-    print(f"🚀 ベクトル化処理開始: UUID = {uuid_to_process}")
+# --- スプレッドシート関連の関数を削除し、新しい関数を定義 ---
+def process_drive_folder(uuid: str, drive_url: str, output_dir: str):
+    """
+    APIから渡された情報をもとに、単一のGoogle Driveフォルダをベクトル化する。
+    """
+    print(f"🚀 ベクトル化処理開始: UUID = {uuid}")
+    print(f"   - Drive URL: {drive_url}")
     
     try:
-        # --- 認証情報をここで一度だけ生成 ---
         credentials = _get_google_credentials()
-
-        if not os.getenv("GCS_BUCKET_NAME") and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            print(f"📂 出力ディレクトリ '{output_dir}' を作成しました。")
-        
-        # --- 生成した認証情報を渡す ---
-        company_df = get_spreadsheet_data(spreadsheet_id, sheet_name, credentials=credentials)
-        if company_df is None:
-            print(f"❌ 処理中断: スプレッドシートのデータを取得できませんでした。")
-            return
-        
-        target_row = company_df[company_df['uuid'] == uuid_to_process]
-        if target_row.empty:
-            print(f"❌ 処理中断: UUID '{uuid_to_process}' がスプレッドシートに見つかりません。")
-            return
-        
-        row_data = target_row.iloc[0]
-        company_name = row_data.get('会社名')
-        drive_url = row_data.get('対象のGoogleドライブ')
-        if not all([company_name, drive_url]):
-            print(f"❌ 処理中断: '会社名' または '対象のGoogleドライブ' が空です。")
-            return
-        
-        output_json_path = os.path.join(output_dir, f"{uuid_to_process}.json")
-        print(f"▶️  処理実行: {company_name} (出力先: {output_json_path})")
+        output_json_path = os.path.join(output_dir, f"{uuid}.json")
         
         processor = ImageProcessor(
             drive_folder_id_or_url=drive_url,
             embeddings_file=output_json_path,
-            credentials=credentials # --- 生成した認証情報を渡す ---
+            credentials=credentials
         )
         processor.process_drive_images()
-        print(f"✅ 処理完了: {company_name} (UUID: {uuid_to_process})")
+        print(f"✅ 処理完了: UUID = {uuid}")
 
     except Exception as e:
-        print(f"❌ 予期せぬエラーが発生しました ({uuid_to_process}): {e}")
+        print(f"❌ 予期せぬエラーが発生しました (UUID: {uuid}): {e}")
         traceback.print_exc()
