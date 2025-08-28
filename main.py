@@ -76,7 +76,7 @@ def search_images_api(
         if trigger == "類似画像検索":
             if not q:
                 raise HTTPException(status_code=400, detail="類似画像検索には検索クエリ 'q' が必須です。")
-            response = co.embed(texts=[q], model="embed-v4.0", input_type="search_query")
+            response = co.embed(texts=[q], model="embed-multilingual-v3.0", input_type="search_query")
             query_embedding = response.embeddings[0]
             results = searcher.search_images(query_embedding=query_embedding, top_k=top_k)
             return {"query": q, "results": results}

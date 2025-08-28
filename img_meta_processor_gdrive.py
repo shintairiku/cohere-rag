@@ -87,7 +87,7 @@ class ImageProcessor:
                 return match.group(1)
         return id_or_url
     
-    # ... (load_existing_data から process_drive_images までは変更なし) ...
+    # ... (load_existing_data から resize_image_if_needed までは変更なし) ...
     def load_existing_data(self):
         if os.path.exists(self.embeddings_file):
             with open(self.embeddings_file, 'r', encoding='utf-8') as f:
@@ -128,9 +128,11 @@ class ImageProcessor:
             print(f"   ❌ リサイズエラー: {e}")
             return None
 
+    # --- ここから修正 ---
     def get_image_embedding(self, image_data: bytes, filename: str) -> np.ndarray:
         try:
-            response = self.client.embed(texts=[filename], model='embed-v4.0', input_type="search_document")
+            # モデル名を 'embed-multilingual-v3.0' に修正
+            response = self.client.embed(texts=[filename], model='embed-multilingual-v3.0', input_type="search_document")
             return np.array(response.embeddings[0])
         except Exception as e:
             print(f"❌ 画像埋め込み生成エラー ({filename}): {e}")
@@ -138,11 +140,13 @@ class ImageProcessor:
 
     def get_meta_embedding(self, filename: str) -> np.ndarray:
         try:
-            response = self.client.embed(texts=[filename], model="embed-v4.0", input_type="search_query")
+            # モデル名を 'embed-multilingual-v3.0' に修正
+            response = self.client.embed(texts=[filename], model="embed-multilingual-v3.0", input_type="search_query")
             return np.array(response.embeddings[0])
         except Exception as e:
             print(f"❌ メタデータ埋め込み生成エラー ({filename}): {e}")
             return None
+    # --- ここまで修正 ---
 
     def get_weighted_image_and_meta_embedding(self, image_data: bytes, filename: str) -> np.ndarray:
         img_vec = self.get_image_embedding(image_data, filename)
@@ -153,6 +157,7 @@ class ImageProcessor:
         vec = w * meta_vec + (1.0 - w) * img_vec
         return vec
 
+    # ... (get_all_subfolders から process_company_by_uuid までは変更なし) ...
     def get_all_subfolders(self, folder_id: str) -> List[Dict[str, str]]:
         all_folders = [{'id': folder_id, 'name': 'ROOT', 'path': ''}]
         folders_to_check = [{'id': folder_id, 'name': 'ROOT', 'path': ''}]
