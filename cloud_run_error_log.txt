@@ -1,0 +1,885 @@
+[
+  {
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "authenticationInfo": {
+        "principalEmail": "742231208085-compute@developer.gserviceaccount.com",
+        "principalSubject": "serviceAccount:742231208085-compute@developer.gserviceaccount.com"
+      },
+      "requestMetadata": {
+        "callerIp": "35.247.65.234",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/536.0.1 command/gcloud.run.services.update invocation-id/79e30c47c8604fc18fc19264142f9699 environment/GCE environment-version/None client-os/LINUX client-os-ver/5.10.0 client-pltf-arch/x86_64 interactive/False from-script/False python/3.12.10 term/ (Linux 5.10.0-32-cloud-amd64),gzip(gfe)",
+        "requestAttributes": {
+          "time": "2025-08-28T20:14:38.789523Z",
+          "auth": {}
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "run.googleapis.com",
+      "methodName": "google.cloud.run.v1.Services.ReplaceService",
+      "authorizationInfo": [
+        {
+          "resource": "namespaces/marketing-automation-461305/services/cohere-rag",
+          "permission": "run.services.update",
+          "granted": true,
+          "resourceAttributes": {},
+          "permissionType": "ADMIN_WRITE"
+        },
+        {
+          "resource": "namespaces/marketing-automation-461305/services/cohere-rag",
+          "permission": "run.services.update",
+          "granted": true,
+          "resourceAttributes": {
+            "service": "run.googleapis.com/",
+            "name": "namespaces/marketing-automation-461305/services/cohere-rag",
+            "type": "run.googleapis.com/Service"
+          },
+          "permissionType": "ADMIN_WRITE"
+        }
+      ],
+      "resourceName": "namespaces/marketing-automation-461305/services/cohere-rag",
+      "request": {
+        "name": "namespaces/marketing-automation-461305/services/cohere-rag",
+        "service": {
+          "apiVersion": "serving.knative.dev/v1",
+          "status": {
+            "traffic": [
+              {
+                "latestRevision": true,
+                "percent": 100,
+                "revisionName": "cohere-rag-00014-vhw"
+              }
+            ],
+            "latestReadyRevisionName": "cohere-rag-00014-vhw",
+            "latestCreatedRevisionName": "cohere-rag-00014-vhw",
+            "observedGeneration": 15,
+            "conditions": [
+              {
+                "type": "Ready",
+                "lastTransitionTime": "2025-08-28T19:48:59.998635Z",
+                "status": "True"
+              },
+              {
+                "lastTransitionTime": "2025-08-28T19:48:57.609579Z",
+                "status": "True",
+                "type": "ConfigurationsReady"
+              },
+              {
+                "status": "True",
+                "lastTransitionTime": "2025-08-28T19:48:59.963118Z",
+                "type": "RoutesReady"
+              }
+            ],
+            "url": "https://cohere-rag-3w4w6ippra-an.a.run.app"
+          },
+          "kind": "Service",
+          "metadata": {
+            "creationTimestamp": "2025-08-25T06:28:38.287535Z",
+            "namespace": "742231208085",
+            "labels": {
+              "gcb-trigger-region": "global",
+              "cloud.googleapis.com/location": "asia-northeast1",
+              "managed-by": "gcp-cloud-build-deploy-cloud-run",
+              "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+              "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+              "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+            },
+            "annotations": {
+              "run.googleapis.com/invoker-iam-disabled": "true",
+              "run.googleapis.com/operation-id": "691a418b-176b-4609-8dc1-d5634e40a5de",
+              "run.googleapis.com/client-version": "536.0.1",
+              "run.googleapis.com/urls": "[\"https://cohere-rag-742231208085.asia-northeast1.run.app\",\"https://cohere-rag-3w4w6ippra-an.a.run.app\"]",
+              "serving.knative.dev/creator": "gaku.masuda@shintairiku.jp",
+              "run.googleapis.com/client-name": "gcloud",
+              "run.googleapis.com/ingress": "all",
+              "serving.knative.dev/lastModifier": "742231208085-compute@developer.gserviceaccount.com",
+              "run.googleapis.com/ingress-status": "all"
+            },
+            "resourceVersion": "AAY9cjJQ/as",
+            "name": "cohere-rag",
+            "uid": "a16e1955-18fa-4a71-8491-65cd6b54f8d9",
+            "generation": 15,
+            "selfLink": "/apis/serving.knative.dev/v1/namespaces/742231208085/services/cohere-rag"
+          },
+          "spec": {
+            "template": {
+              "metadata": {
+                "labels": {
+                  "managed-by": "gcp-cloud-build-deploy-cloud-run",
+                  "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+                  "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+                  "cloud.googleapis.com/location": "asia-northeast1",
+                  "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+                  "gcb-trigger-region": "global",
+                  "client.knative.dev/nonce": "pvwywojqha"
+                },
+                "annotations": {
+                  "run.googleapis.com/client-name": "gcloud",
+                  "run.googleapis.com/client-version": "536.0.1",
+                  "run.googleapis.com/startup-cpu-boost": "true",
+                  "autoscaling.knative.dev/maxScale": "20"
+                }
+              },
+              "spec": {
+                "containers": [
+                  {
+                    "resources": {
+                      "limits": {
+                        "cpu": "1000m",
+                        "memory": "1Gi"
+                      }
+                    },
+                    "image": "asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag/cohere-rag:ea35ce989d7c48fde8014f911d43f5dd98863168",
+                    "name": "placeholder-1"
+                  }
+                ],
+                "containerConcurrency": 80,
+                "timeoutSeconds": 300,
+                "serviceAccountName": "marketing-automation@marketing-automation-461305.iam.gserviceaccount.com"
+              }
+            },
+            "traffic": [
+              {
+                "percent": 100,
+                "latestRevision": true
+              }
+            ]
+          }
+        },
+        "@type": "type.googleapis.com/google.cloud.run.v1.ReplaceServiceRequest"
+      },
+      "resourceLocation": {
+        "currentLocations": [
+          "asia-northeast1"
+        ]
+      }
+    },
+    "insertId": "1mty0e9d71uy",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "project_id": "marketing-automation-461305",
+        "configuration_name": "",
+        "revision_name": "",
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:37.955072Z",
+    "severity": "NOTICE",
+    "logName": "projects/marketing-automation-461305/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "2025-08-28T20:14:39.360794129Z"
+  },
+  {
+    "textPayload": "Starting new instance. Reason: DEPLOYMENT_ROLLOUT - Instance started due to traffic shifting between revisions due to deployment, traffic split adjustment, or deployment health check.",
+    "insertId": "68b0b8ba00043d09df01a4fc",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:50.277769Z",
+    "severity": "INFO",
+    "labels": {
+      "gcb-trigger-region": "global",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "scaling_reason": "DEPLOYMENT_ROLLOUT",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2025-08-28T20:14:50.280527169Z"
+  },
+  {
+    "textPayload": "INFO:     Started server process [5]",
+    "insertId": "68b0b8c20005745edb1d750a",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "project_id": "marketing-automation-461305",
+        "configuration_name": "cohere-rag",
+        "location": "asia-northeast1"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.357470Z",
+    "labels": {
+      "gcb-trigger-region": "global",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:14:58.360149248Z"
+  },
+  {
+    "textPayload": "INFO:     Waiting for application startup.",
+    "insertId": "68b0b8c2000574c2ee24d137",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag",
+        "configuration_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.357570Z",
+    "labels": {
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "gcb-trigger-region": "global"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:14:58.693604867Z"
+  },
+  {
+    "textPayload": "INFO:     Application startup complete.",
+    "insertId": "68b0b8c2000576462456644b",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.357958Z",
+    "labels": {
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-region": "global",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:14:58.693604867Z"
+  },
+  {
+    "textPayload": "INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)",
+    "insertId": "68b0b8c200057dd1621beee3",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "configuration_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag",
+        "location": "asia-northeast1"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.359889Z",
+    "labels": {
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "gcb-trigger-region": "global",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:14:58.693604867Z"
+  },
+  {
+    "textPayload": "Default STARTUP TCP probe succeeded after 1 attempt for container \"placeholder-1\" on port 8080.",
+    "insertId": "68b0b8c200057f6abc42d0e9",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "configuration_name": "cohere-rag",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "location": "asia-northeast1"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.360298Z",
+    "severity": "INFO",
+    "labels": {
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-trigger-region": "global",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2025-08-28T20:14:58.607593059Z"
+  },
+  {
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {
+        "message": "Ready condition status changed to True for Revision cohere-rag-00015-tl7 with message: Deploying revision succeeded in 19.57s."
+      },
+      "serviceName": "run.googleapis.com",
+      "methodName": "/Services.ReplaceService",
+      "resourceName": "namespaces/marketing-automation-461305/revisions/cohere-rag-00015-tl7",
+      "response": {
+        "metadata": {
+          "name": "cohere-rag-00015-tl7",
+          "namespace": "742231208085",
+          "selfLink": "/apis/serving.knative.dev/v1/namespaces/742231208085/revisions/cohere-rag-00015-tl7",
+          "uid": "a29e1228-2f86-46cb-8f5a-0527e31ed71f",
+          "resourceVersion": "AAY9co80fJ0",
+          "generation": 1,
+          "creationTimestamp": "2025-08-28T20:14:38.839857Z",
+          "labels": {
+            "client.knative.dev/nonce": "pvwywojqha",
+            "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+            "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+            "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+            "gcb-trigger-region": "global",
+            "managed-by": "gcp-cloud-build-deploy-cloud-run",
+            "serving.knative.dev/configuration": "cohere-rag",
+            "serving.knative.dev/configurationGeneration": "15",
+            "serving.knative.dev/service": "cohere-rag",
+            "serving.knative.dev/serviceUid": "a16e1955-18fa-4a71-8491-65cd6b54f8d9",
+            "serving.knative.dev/route": "cohere-rag",
+            "cloud.googleapis.com/location": "asia-northeast1",
+            "run.googleapis.com/startupProbeType": "Default"
+          },
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "20",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "536.0.1",
+            "serving.knative.dev/creator": "742231208085-compute@developer.gserviceaccount.com",
+            "run.googleapis.com/operation-id": "db5aa738-9162-4beb-8515-69e4ec18f15f",
+            "run.googleapis.com/startup-cpu-boost": "true"
+          },
+          "ownerReferences": [
+            {
+              "kind": "Configuration",
+              "name": "cohere-rag",
+              "uid": "eb9740be-20ef-4362-be93-e9da4d8f2b51",
+              "apiVersion": "serving.knative.dev/v1",
+              "controller": true,
+              "blockOwnerDeletion": true
+            }
+          ]
+        },
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Revision",
+        "spec": {
+          "containerConcurrency": 80,
+          "timeoutSeconds": 300,
+          "serviceAccountName": "marketing-automation@marketing-automation-461305.iam.gserviceaccount.com",
+          "containers": [
+            {
+              "name": "placeholder-1",
+              "image": "asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag/cohere-rag@sha256:0c497224f08df71cc260d5bc5869b95728e7829b70da26c880ad20bcb1c43a7e",
+              "ports": [
+                {
+                  "name": "http1",
+                  "containerPort": 8080
+                }
+              ],
+              "env": [
+                {
+                  "name": "COHERE_API_KEY",
+                  "value": "6T3N7PvvKj0J3xAj6WbXvSKQAms4VlEQ3oAFXFIL"
+                },
+                {
+                  "name": "GCS_BUCKET_NAME",
+                  "value": "embedding_storage"
+                },
+                {
+                  "name": "ENVIRONMENT",
+                  "value": "production"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1000m",
+                  "memory": "1Gi"
+                }
+              },
+              "startupProbe": {
+                "timeoutSeconds": 240,
+                "periodSeconds": 240,
+                "failureThreshold": 1,
+                "tcpSocket": {
+                  "port": 8080
+                }
+              }
+            }
+          ]
+        },
+        "status": {
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "message": "Deploying revision succeeded in 19.57s.",
+              "lastTransitionTime": "2025-08-28T20:14:58.411677Z"
+            },
+            {
+              "type": "ContainerHealthy",
+              "status": "True",
+              "message": "Containers became healthy in 7.98s.",
+              "lastTransitionTime": "2025-08-28T20:14:58.370041Z"
+            },
+            {
+              "type": "ContainerReady",
+              "status": "True",
+              "message": "Container image import completed in 8.16s.",
+              "lastTransitionTime": "2025-08-28T20:14:47.560030Z"
+            },
+            {
+              "type": "ResourcesAvailable",
+              "status": "True",
+              "message": "Provisioning imported containers completed in 2.6s. Checking container health. This will wait for up to 4m for the configured startup probe, including an initial delay of 0s.",
+              "lastTransitionTime": "2025-08-28T20:14:50.158670Z"
+            }
+          ],
+          "logUrl": "https://console.cloud.google.com/logs/viewer?project=marketing-automation-461305&resource=cloud_run_revision/service_name/cohere-rag/revision_name/cohere-rag-00015-tl7&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22cohere-rag%22%0Aresource.labels.revision_name%3D%22cohere-rag-00015-tl7%22",
+          "imageDigest": "asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag/cohere-rag@sha256:0c497224f08df71cc260d5bc5869b95728e7829b70da26c880ad20bcb1c43a7e",
+          "containerStatuses": [
+            {
+              "name": "placeholder-1",
+              "imageDigest": "asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag/cohere-rag@sha256:0c497224f08df71cc260d5bc5869b95728e7829b70da26c880ad20bcb1c43a7e"
+            }
+          ]
+        },
+        "@type": "type.googleapis.com/google.cloud.run.v1.Revision"
+      }
+    },
+    "insertId": "-woaf3ydag8o",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "project_id": "marketing-automation-461305",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:14:58.422342Z",
+    "severity": "INFO",
+    "logName": "projects/marketing-automation-461305/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "receiveTimestamp": "2025-08-28T20:14:59.227169968Z"
+  },
+  {
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {
+        "message": "Ready condition status changed to True for Service cohere-rag."
+      },
+      "serviceName": "run.googleapis.com",
+      "methodName": "/Services.ReplaceService",
+      "resourceName": "namespaces/marketing-automation-461305/services/cohere-rag",
+      "response": {
+        "metadata": {
+          "name": "cohere-rag",
+          "namespace": "742231208085",
+          "selfLink": "/apis/serving.knative.dev/v1/namespaces/742231208085/services/cohere-rag",
+          "uid": "a16e1955-18fa-4a71-8491-65cd6b54f8d9",
+          "resourceVersion": "AAY9co9ZqRo",
+          "generation": 16,
+          "creationTimestamp": "2025-08-25T06:28:38.287535Z",
+          "labels": {
+            "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+            "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+            "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+            "gcb-trigger-region": "global",
+            "managed-by": "gcp-cloud-build-deploy-cloud-run",
+            "cloud.googleapis.com/location": "asia-northeast1"
+          },
+          "annotations": {
+            "serving.knative.dev/creator": "gaku.masuda@shintairiku.jp",
+            "serving.knative.dev/lastModifier": "742231208085-compute@developer.gserviceaccount.com",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "536.0.1",
+            "run.googleapis.com/operation-id": "db5aa738-9162-4beb-8515-69e4ec18f15f",
+            "run.googleapis.com/ingress": "all",
+            "run.googleapis.com/ingress-status": "all",
+            "run.googleapis.com/invoker-iam-disabled": "true",
+            "run.googleapis.com/urls": "[\"https://cohere-rag-742231208085.asia-northeast1.run.app\",\"https://cohere-rag-3w4w6ippra-an.a.run.app\"]"
+          }
+        },
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "spec": {
+          "template": {
+            "metadata": {
+              "labels": {
+                "client.knative.dev/nonce": "pvwywojqha",
+                "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+                "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+                "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+                "gcb-trigger-region": "global",
+                "managed-by": "gcp-cloud-build-deploy-cloud-run",
+                "run.googleapis.com/startupProbeType": "Default"
+              },
+              "annotations": {
+                "autoscaling.knative.dev/maxScale": "20",
+                "run.googleapis.com/client-name": "gcloud",
+                "run.googleapis.com/client-version": "536.0.1",
+                "run.googleapis.com/startup-cpu-boost": "true"
+              }
+            },
+            "spec": {
+              "containerConcurrency": 80,
+              "timeoutSeconds": 300,
+              "serviceAccountName": "marketing-automation@marketing-automation-461305.iam.gserviceaccount.com",
+              "containers": [
+                {
+                  "name": "placeholder-1",
+                  "image": "asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag/cohere-rag:ea35ce989d7c48fde8014f911d43f5dd98863168",
+                  "ports": [
+                    {
+                      "name": "http1",
+                      "containerPort": 8080
+                    }
+                  ],
+                  "env": [
+                    {
+                      "name": "COHERE_API_KEY",
+                      "value": "6T3N7PvvKj0J3xAj6WbXvSKQAms4VlEQ3oAFXFIL"
+                    },
+                    {
+                      "name": "GCS_BUCKET_NAME",
+                      "value": "embedding_storage"
+                    },
+                    {
+                      "name": "ENVIRONMENT",
+                      "value": "production"
+                    }
+                  ],
+                  "resources": {
+                    "limits": {
+                      "cpu": "1000m",
+                      "memory": "1Gi"
+                    }
+                  },
+                  "startupProbe": {
+                    "timeoutSeconds": 240,
+                    "periodSeconds": 240,
+                    "failureThreshold": 1,
+                    "tcpSocket": {
+                      "port": 8080
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "traffic": [
+            {
+              "percent": 100,
+              "latestRevision": true
+            }
+          ]
+        },
+        "status": {
+          "observedGeneration": 16,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "lastTransitionTime": "2025-08-28T20:15:00.847898Z"
+            },
+            {
+              "type": "ConfigurationsReady",
+              "status": "True",
+              "lastTransitionTime": "2025-08-28T20:14:59.002030Z"
+            },
+            {
+              "type": "RoutesReady",
+              "status": "True",
+              "lastTransitionTime": "2025-08-28T20:15:00.817358Z"
+            }
+          ],
+          "latestReadyRevisionName": "cohere-rag-00015-tl7",
+          "latestCreatedRevisionName": "cohere-rag-00015-tl7",
+          "traffic": [
+            {
+              "revisionName": "cohere-rag-00015-tl7",
+              "percent": 100,
+              "latestRevision": true
+            }
+          ],
+          "url": "https://cohere-rag-3w4w6ippra-an.a.run.app",
+          "address": {
+            "url": "https://cohere-rag-3w4w6ippra-an.a.run.app"
+          }
+        },
+        "@type": "type.googleapis.com/google.cloud.run.v1.Service"
+      }
+    },
+    "insertId": "-ld0fjvd3m32",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "configuration_name": "",
+        "revision_name": "",
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:00.861553Z",
+    "severity": "INFO",
+    "logName": "projects/marketing-automation-461305/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "receiveTimestamp": "2025-08-28T20:15:01.230240588Z"
+  },
+  {
+    "insertId": "68b0b8e10002ffbd361d0e17",
+    "httpRequest": {
+      "requestMethod": "POST",
+      "requestUrl": "https://cohere-rag-742231208085.asia-northeast1.run.app/vectorize",
+      "requestSize": "626",
+      "status": 202,
+      "responseSize": "207",
+      "userAgent": "Mozilla/5.0 (compatible; Google-Apps-Script; beanserver; +https://script.google.com; id: UAEmdDd_-sDIVMpswnyZLRXEjNy4214jhDg)",
+      "remoteIp": "107.178.192.99",
+      "serverIp": "34.143.78.2",
+      "latency": "0.043163531s",
+      "protocol": "HTTP/1.1"
+    },
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "service_name": "cohere-rag",
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.151850Z",
+    "severity": "INFO",
+    "labels": {
+      "gcb-trigger-region": "global",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Frequests",
+    "trace": "projects/marketing-automation-461305/traces/4bf7480793b63f61dd1a8808e0e8e9d4",
+    "receiveTimestamp": "2025-08-28T20:15:29.199705580Z",
+    "spanId": "75ac7baaaaf302f9",
+    "traceSampled": true
+  },
+  {
+    "textPayload": "📬 ベクトル化リクエスト受信: UUID = 0f2e3cd7-de9c-4e2b-bdac-58a92d3e3d98",
+    "insertId": "68b0b8e10002600901de5de1",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag",
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.155657Z",
+    "labels": {
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "gcb-trigger-region": "global",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.162442131Z"
+  },
+  {
+    "textPayload": "INFO:     169.254.169.126:14124 - \"POST /vectorize HTTP/1.1\" 202 Accepted",
+    "insertId": "68b0b8e100026149c242473d",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "configuration_name": "cohere-rag",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag",
+        "location": "asia-northeast1",
+        "revision_name": "cohere-rag-00015-tl7"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.155977Z",
+    "labels": {
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-region": "global"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.492777043Z"
+  },
+  {
+    "textPayload": "🚀 ベクトル化処理開始: UUID = 0f2e3cd7-de9c-4e2b-bdac-58a92d3e3d98",
+    "insertId": "68b0b8e100030225bf1ca535",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "configuration_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "service_name": "cohere-rag",
+        "project_id": "marketing-automation-461305"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.197157Z",
+    "labels": {
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-region": "global",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.492777043Z"
+  },
+  {
+    "textPayload": "   - Drive URL: https://drive.google.com/open?id=1unmGILSEk0zj0w5izDKoF9-lAmhQjXbC&usp=drive_fs",
+    "insertId": "68b0b8e1000302474e65f3d7",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "project_id": "marketing-automation-461305",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag",
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.197191Z",
+    "labels": {
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-region": "global",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.492777043Z"
+  },
+  {
+    "textPayload": "🌐 プロダクション環境: ADC を使用します。",
+    "insertId": "68b0b8e100030283893dbf75",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "project_id": "marketing-automation-461305",
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.197251Z",
+    "labels": {
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-region": "global",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.492777043Z"
+  },
+  {
+    "textPayload": "🔍 Google DriveフォルダID '1unmGILSEk0zj0w5izDKoF9-lAmhQjXbC' を再帰的に検索中...",
+    "insertId": "68b0b8e1000426b7b9cecd72",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "configuration_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "location": "asia-northeast1",
+        "project_id": "marketing-automation-461305",
+        "service_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.272055Z",
+    "labels": {
+      "gcb-trigger-region": "global",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2025-08-28T20:15:29.492777043Z"
+  },
+  {
+    "textPayload": "httplib2 transport does not support per-request timeout. Set the timeout when constructing the httplib2.Http instance.",
+    "insertId": "68b0b8e10004697f398311f2",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "revision_name": "cohere-rag-00015-tl7",
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag",
+        "project_id": "marketing-automation-461305",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.289151Z",
+    "labels": {
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-trigger-region": "global",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:15:29.295539988Z"
+  },
+  {
+    "textPayload": "httplib2 transport does not support per-request timeout. Set the timeout when constructing the httplib2.Http instance.",
+    "insertId": "68b0b8e1000470cff912466d",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "location": "asia-northeast1",
+        "service_name": "cohere-rag",
+        "revision_name": "cohere-rag-00015-tl7",
+        "project_id": "marketing-automation-461305",
+        "configuration_name": "cohere-rag"
+      }
+    },
+    "timestamp": "2025-08-28T20:15:29.291023Z",
+    "labels": {
+      "commit-sha": "ea35ce989d7c48fde8014f911d43f5dd98863168",
+      "managed-by": "gcp-cloud-build-deploy-cloud-run",
+      "gcb-trigger-id": "1c3f45d0-112e-4565-a9bc-2281c7e2954b",
+      "gcb-trigger-region": "global",
+      "instanceId": "0069c7a988cce5f37c10becd8abfebdb5f1afbd2609cfcc1f03417f403a775c99be8a56174e9aa773f46eef5eac87cd7f06902f8ddd738fcd9340446abf43f7168ab1c3c14aa3795034a4ba7ba84cba4f269",
+      "gcb-build-id": "abe74efd-3f83-4839-8be4-547d503953fe"
+    },
+    "logName": "projects/marketing-automation-461305/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2025-08-28T20:15:29.625829947Z"
+  }
+]
