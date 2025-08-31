@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from google.cloud import run_v2
-from google.api_core.exceptions import GoogleAPICallError
 
 from search import ImageSearcher
 
@@ -45,30 +44,38 @@ async def trigger_vectorization_job(request: VectorizeRequest):
     job_name = f"{job_parent}/jobs/{VECTORIZE_JOB_NAME}"
 
     try:
-        operation = run_client.run_job(
+        # Create the request object correctly for the Jobs API
+        print(f"  -> Attempting to run job: {job_name}")
+        
+        # Create the request using proper structure
+        request_object = run_v2.RunJobRequest(
             name=job_name,
             overrides=run_v2.RunJobRequest.Overrides(
                 container_overrides=[
                     run_v2.RunJobRequest.Overrides.ContainerOverride(
                         env=[
                             {"name": "UUID", "value": request.uuid},
-                            {"name": "DRIVE_URL", "value": request.drive_url},
+                            {"name": "DRIVE_URL", "value": request.drive_url}
                         ]
                     )
                 ]
-            ),
+            )
         )
-        print(f"  -> Successfully started job execution for '{VECTORIZE_JOB_NAME}'. Waiting for response...")
-        response = operation.result()
-        print(f"  -> Job execution created: {response.name}")
-        return {"message": "Vectorization job started successfully.", "execution_name": response.name}
+        
+        operation = run_client.run_job(request=request_object)
+        
+        print(f"  -> Job execution started. Operation: {operation.name}")
+        return {
+            "message": f"Vectorization job started successfully for UUID: {request.uuid}", 
+            "operation_name": operation.name,
+            "job_name": VECTORIZE_JOB_NAME
+        }
 
-    except GoogleAPICallError as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to start Cloud Run Job: {e}")
     except Exception as e:
+        error_msg = f"Failed to start Cloud Run Job: {str(e)}"
+        print(f"  -> ERROR: {error_msg}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.get("/search", response_model=Dict)

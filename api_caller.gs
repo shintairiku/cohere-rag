@@ -5,7 +5,7 @@
 // --- 設定項目 ---
 const API_BASE_URL = "https://cohere-rag-742231208085.asia-northeast1.run.app"; 
 const COMPANY_LIST_SHEET_NAME = "会社一覧";
-// (検索シート用の設定は変更なし)
+// ... (他の設定は変更なし) ...
 const COLUMN_QUERY = 1;
 const COLUMN_TRIGGER = 3;
 const COLUMN_RESULT_START = 4;
@@ -20,40 +20,17 @@ const STATUS_TEXT_COMPLETE = "実行完了";
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('✨画像検索メニュー')
-    .addItem('1. 選択行の会社の画像をベクトル化', 'callVectorizeApiForSelectedRow')
+    .addItem('1. 選択行のベクトル化タスクを発行', 'callVectorizeApiForSelectedRow')
+    .addItem('2. 選択行のベクトル化結果を統合', 'callAggregateApiForSelectedRow') // <-- 新しい項目を追加
     .addSeparator()
     .addItem('（管理者用）空のUUIDを一括生成', 'fillEmptyUuids')
     .addToUi();
 }
 
-function onEdit(e) {
-  const sheet = e.source.getActiveSheet();
-  const range = e.range;
-  const sheetName = sheet.getName();
+// onEdit, clearPreviousResults, performSearch, writeResultsToSheet, callSearchApi, getUuidForSheet, fillEmptyUuids は変更なし
 
-  if (sheetName === COMPANY_LIST_SHEET_NAME && range.getColumn() === 2 && range.getRow() > 1) {
-    const companyName = range.getValue();
-    const uuidCell = sheet.getRange(range.getRow(), 1);
-    if (companyName && uuidCell.isBlank()) {
-      uuidCell.setValue(Utilities.getUuid());
-    }
-    return;
-  }
+// --- ベクトル化・統合関連の関数 ---
 
-  if (sheetName !== COMPANY_LIST_SHEET_NAME && range.getColumn() === COLUMN_TRIGGER && range.getRow() > 1) {
-    const triggerValue = e.value;
-    const row = range.getRow();
-    if (triggerValue === TRIGGER_TEXT_NOT_EXECUTED) {
-      clearPreviousResults(sheet, row);
-      return;
-    }
-    if (triggerValue === TRIGGER_TEXT_SIMILAR || triggerValue === TRIGGER_TEXT_RANDOM) {
-      performSearch(sheet, row, triggerValue);
-    }
-  }
-}
-
-// --- ここから修正 ---
 function callVectorizeApiForSelectedRow() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   if (sheet.getName() !== COMPANY_LIST_SHEET_NAME) {
@@ -63,15 +40,14 @@ function callVectorizeApiForSelectedRow() {
   const activeCell = sheet.getActiveCell();
   const activeRow = activeCell.getRow();
   if (activeRow < 2) {
-    SpreadsheetApp.getUi().alert("ヘッダー行より下の、対象の会社の行を選択してください。");
+    SpreadsheetApp.getUi().alert("ヘッダー行より下の行を選択してください。");
     return;
   }
 
-  // 選択行からUUIDとDrive URLを取得
   const rowData = sheet.getRange(activeRow, 1, 1, 3).getValues()[0];
-  const uuid = rowData[0];      // A列
-  const companyName = rowData[1]; // B列
-  const driveUrl = rowData[2];  // C列
+  const uuid = rowData[0];
+  const companyName = rowData[1];
+  const driveUrl = rowData[2];
 
   if (!uuid || !driveUrl) {
     SpreadsheetApp.getUi().alert("選択された行にUUIDまたはDrive URLが見つかりません。");
@@ -79,44 +55,91 @@ function callVectorizeApiForSelectedRow() {
   }
 
   const ui = SpreadsheetApp.getUi();
-  const response = ui.alert(`「${companyName}」の画像のベクトル化を開始しますか？`, ui.ButtonSet.YES_NO);
+  const response = ui.alert(`「${companyName}」の画像のベクトル化タスクを発行しますか？`, ui.ButtonSet.YES_NO);
 
   if (response == ui.Button.YES) {
     try {
-      // 取得した情報をAPIに渡す
-      callVectorizeApi(uuid, driveUrl);
-      ui.alert(`「${companyName}」のベクトル化処理を開始しました。\n処理には数分かかる場合があります。`);
+      const apiResponse = callVectorizeApi(uuid, driveUrl);
+      ui.alert(`タスクの発行を開始しました。\n\nサーバーからの応答:\n${apiResponse}`);
     } catch (e) {
       Logger.log(e);
-      ui.alert(`API呼び出し中にエラーが発生しました。\n\nエラー内容:\n${e.message}`);
+      ui.alert(`API呼び出し中にエラーが発生しました:\n${e.message}`);
     }
   }
 }
 
 function callVectorizeApi(uuid, driveUrl) {
   const url = `${API_BASE_URL}/vectorize`;
-  // ペイロードにdrive_urlを追加
-  const payload = {
-    uuid: uuid,
-    drive_url: driveUrl 
-  };
+  const payload = { uuid: uuid, drive_url: driveUrl };
   const options = {
     method: 'post',
     contentType: 'application/json',
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
-  Logger.log(`Requesting to ${url} with payload: ${JSON.stringify(payload)}`);
   const response = UrlFetchApp.fetch(url, options);
   const responseCode = response.getResponseCode();
   const responseBody = response.getContentText();
-  Logger.log(`Response Code: ${responseCode}`);
-  Logger.log(`Response Body: ${responseBody}`);
   if (responseCode !== 202) {
-    throw new Error(`APIリクエストに失敗しました (HTTP ${responseCode}): ${responseBody}`);
+    throw new Error(`APIリクエスト失敗 (HTTP ${responseCode}): ${responseBody}`);
+  }
+  return responseBody; // 正常な応答メッセージを返す
+}
+
+
+// --- 新しい関数: 統合APIを呼び出す ---
+function callAggregateApiForSelectedRow() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() !== COMPANY_LIST_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert(`この操作は「${COMPANY_LIST_SHEET_NAME}」シートでのみ実行できます。`);
+    return;
+  }
+  const activeCell = sheet.getActiveCell();
+  const activeRow = activeCell.getRow();
+  if (activeRow < 2) {
+    SpreadsheetApp.getUi().alert("ヘッダー行より下の行を選択してください。");
+    return;
+  }
+
+  const uuid = sheet.getRange(activeRow, 1).getValue();
+  const companyName = sheet.getRange(activeRow, 2).getValue();
+
+  if (!uuid) {
+    SpreadsheetApp.getUi().alert("選択された行にUUIDが見つかりません。");
+    return;
+  }
+  
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(`「${companyName}」のベクトル化結果を統合しますか？\n\n注意: 全てのベクトル化タスクが完了してから実行してください。`, ui.ButtonSet.YES_NO);
+
+  if (response == ui.Button.YES) {
+    try {
+      const apiResponse = callAggregateApi(uuid);
+      ui.alert(`結果の統合を開始しました。\n\nサーバーからの応答:\n${apiResponse}`);
+    } catch (e) {
+      Logger.log(e);
+      ui.alert(`API呼び出し中にエラーが発生しました:\n${e.message}`);
+    }
   }
 }
-// --- ここまで修正 ---
+
+function callAggregateApi(uuid) {
+  const url = `${API_BASE_URL}/aggregate`;
+  const payload = { uuid: uuid };
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  const responseBody = response.getContentText();
+  if (responseCode !== 200) {
+    throw new Error(`APIリクエスト失敗 (HTTP ${responseCode}): ${responseBody}`);
+  }
+  return responseBody;
+}
 
 // ... (以降の検索関連、UUID生成関連の関数は変更なし) ...
 function clearPreviousResults(sheet, row) {
@@ -236,3 +259,4 @@ function fillEmptyUuids() {
     SpreadsheetApp.getUi().alert('UUIDが空の行は見つかりませんでした。');
   }
 }
+
