@@ -1,27 +1,14 @@
-# 1つのリポジトリから2つのCloud RunサービスをデプロイするためのCloud Build構成ファイル
-
+# Cloud Run サービス (main) と Cloud Run ジョブ (vectorize-job) をデプロイする構成
 steps:
-# --- 1. 司令塔・統合役 (main-service) のビルド＆デプロイ ---
-
-# Dockerイメージをビルドします (Dockerfileを使用)
+# --- 1. 司令塔 (main-service) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
-  id: 'Build Main Image'
-  args:
-    - 'build'
-    - '-t'
-    - 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
-    - '.'
-    - '-f'
-    - 'Dockerfile'
+  id: 'Build Main Service Image'
+  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}', '.', '-f', 'Dockerfile']
 
-# ビルドしたイメージをArtifact Registryにプッシュします
 - name: 'gcr.io/cloud-builders/docker'
-  id: 'Push Main Image'
-  args:
-    - 'push'
-    - 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
+  id: 'Push Main Service Image'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}']
 
-# イメージをCloud Runサービスとしてデプロイします
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   id: 'Deploy Main Service'
   entrypoint: gcloud
@@ -30,61 +17,46 @@ steps:
     - 'deploy'
     - '${_SERVICE_NAME_MAIN}'
     - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
-    - '--region=asia-northeast1'
+    - '--region=${_GCP_REGION}'
     - '--platform=managed'
-    - '--allow-unauthenticated' # 外部(GAS)からのHTTPリクエストを許可
-    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},PUBSUB_TOPIC_ID=${_PUBSUB_TOPIC_ID},ENVIRONMENT=production'
+    - '--allow-unauthenticated'
     - '--service-account=${_SERVICE_ACCOUNT}'
-    - '--timeout=900' # 司令塔のタイムアウトは15分
+    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=${_JOB_NAME_VECTORIZE},GCP_REGION=${_GCP_REGION}'
 
-# --- 2. 作業員 (worker-service) のビルド＆デプロイ ---
-
-# Dockerイメージをビルドします (Dockerfile.workerを使用)
+# --- 2. 作業員 (vectorize-job) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
-  id: 'Build Worker Image'
-  args:
-    - 'build'
-    - '-t'
-    - 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_WORKER}:${COMMIT_SHA}'
-    - '.'
-    - '-f'
-    - 'Dockerfile.worker'
+  id: 'Build Vectorize Job Image'
+  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
 
-# ビルドしたイメージをArtifact Registryにプッシュします
 - name: 'gcr.io/cloud-builders/docker'
-  id: 'Push Worker Image'
-  args:
-    - 'push'
-    - 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_WORKER}:${COMMIT_SHA}'
+  id: 'Push Vectorize Job Image'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}']
 
-# イメージをCloud Runサービスとしてデプロイします
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-  id: 'Deploy Worker Service'
+  id: 'Deploy Vectorize Job'
   entrypoint: gcloud
   args:
     - 'run'
-    - 'deploy'
-    - '${_SERVICE_NAME_WORKER}'
-    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_WORKER}:${COMMIT_SHA}'
-    - '--region=asia-northeast1'
-    - '--platform=managed'
-    - '--no-allow-unauthenticated' # 外部からの直接アクセスを禁止
-    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY},ENVIRONMENT=production'
+    - 'jobs'
+    - 'update' # Use 'update' to create or update the job definition
+    - '${_JOB_NAME_VECTORIZE}'
+    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
+    - '--region=${_GCP_REGION}'
     - '--service-account=${_SERVICE_ACCOUNT}'
-    - '--timeout=600' # Workerのタイムアウトは10分
-    - '--max-instances=100' # 必要に応じてスケールアウト
+    - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
+    - '--tasks=1'      # This job runs as a single task
+    - '--max-retries=1' # How many times to retry if it fails
 
-# Cloud Buildのトリガー設定などで、これらの変数を設定してください
 substitutions:
-  _SERVICE_NAME_MAIN: 'cohere-rag-main'   # 司令塔のCloud Runサービス名
-  _SERVICE_NAME_WORKER: 'cohere-rag-worker' # 作業員のCloud Runサービス名
-  _ARTIFACT_REGISTRY_REPO: 'cloud-run-source-deploy' # Artifact Registryのリポジトリ名
-  _GCS_BUCKET_NAME: 'embedding_storage' # GCSバケット名
-  _PUBSUB_TOPIC_ID: 'vectorize-tasks'   # Pub/SubトピックID
-  _SERVICE_ACCOUNT: 'marketing-automation@marketing-automation-461305.iam.gserviceaccount.com' # サービスアカウントのメールアドレス
-  _COHERE_API_KEY: '' # Secret Managerから取得するか、ビルド変数として設定
+  _SERVICE_NAME_MAIN: 'cohere-rag-main'
+  _JOB_NAME_VECTORIZE: 'cohere-rag-vectorize-job'
+  _ARTIFACT_REGISTRY_REPO: 'cloud-run-source-deploy'
+  _GCS_BUCKET_NAME: 'embedding_storage'
+  _GCP_REGION: 'asia-northeast1'
+  _SERVICE_ACCOUNT: 'marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
+  # _COHERE_API_KEY はCloud Buildトリガーの変数として設定します
 
-# ビルドしたイメージの情報を記録
 images:
 - 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
-- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_WORKER}:${COMMIT_SHA}'
+- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
+

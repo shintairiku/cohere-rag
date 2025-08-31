@@ -1,0 +1,24 @@
+# Use the official lightweight Python image.
+# https://hub.docker.com/_/python
+FROM python:3.12-slim
+
+# Allow statements and log messages to be sent straight to the logs
+# without being buffered.
+ENV PYTHONUNBUFFERED True
+
+# Set the working directory in the container.
+WORKDIR /app
+
+# Copy the requirements file into the container.
+COPY requirements.txt .
+
+# Install the dependencies.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the job script and its dependencies into the container.
+COPY img_meta_processor_gdrive.py .
+COPY drive_scanner.py .
+
+# Set the entrypoint for the container to run the job script.
+CMD ["python", "img_meta_processor_gdrive.py"]
+
