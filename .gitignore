@@ -14,3 +14,4 @@ count_img.py
 images/*
 .env
 *.json
+cloud_run_error_log.txt
