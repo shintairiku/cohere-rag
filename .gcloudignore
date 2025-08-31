@@ -1,0 +1,39 @@
+# This file specifies files that are *not* uploaded to Google Cloud when
+# deploying. For more information, see:
+# https://cloud.google.com/sdk/gcloud/reference/topic/gcloudignore
+
+.gcloudignore
+.git
+.gitignore
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Local files
+.env
+service_account.json
+marketing-automation-461305-2acf4965e0b0.json
+
+# Log and script files not needed for deployment
+*.log
+*.gs
+*.txt
