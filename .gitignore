@@ -15,3 +15,4 @@ images/*
 .env
 *.json
 cloud_run_error_log.txt
+fix_cloud_build_trigger.md

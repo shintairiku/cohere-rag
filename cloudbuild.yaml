@@ -38,7 +38,7 @@ steps:
   args:
     - 'run'
     - 'jobs'
-    - 'update' # Use 'update' to create or update the job definition
+    - 'replace' # Use 'replace' to create or update the job definition
     - '${_JOB_NAME_VECTORIZE}'
     - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
     - '--region=${_GCP_REGION}'
@@ -48,7 +48,7 @@ steps:
     - '--max-retries=1' # How many times to retry if it fails
 
 substitutions:
-  _SERVICE_NAME_MAIN: 'cohere-rag-main'
+  _SERVICE_NAME_MAIN: 'cohere-rag'  # 実際のサービス名に合わせる
   _JOB_NAME_VECTORIZE: 'cohere-rag-vectorize-job'
   _ARTIFACT_REGISTRY_REPO: 'cloud-run-source-deploy'
   _GCS_BUCKET_NAME: 'embedding_storage'

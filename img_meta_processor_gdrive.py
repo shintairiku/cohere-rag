@@ -76,17 +76,54 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         return None
 
 def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
-    """画像データとファイル名からマルチモーダルベクトルを生成する"""
+    """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
-        base64_string = base64.b64encode(image_bytes).decode("utf-8")
-        
-        response = co_client.embed(
+        # 1. ファイル名をtextとしてベクトル化
+        text_response = co_client.embed(
             texts=[filename],
-            images=[base64_string],
-            model="embed-multilingual-v3.0", # Note: As of late 2024, v3 supports multimodal
+            model="embed-multilingual-v3.0",
             input_type="search_document"
         )
-        return np.array(response.embeddings[0])
+        text_vec = np.array(text_response.embeddings[0])
+        
+        # 2. 画像をimageとしてベクトル化（data URI形式で送信）
+        file_extension = filename.lower().split('.')[-1]
+        if file_extension in ['jpg', 'jpeg']:
+            mime_type = 'jpeg'
+        elif file_extension in ['png']:
+            mime_type = 'png'
+        elif file_extension in ['gif']:
+            mime_type = 'gif'
+        elif file_extension in ['webp']:
+            mime_type = 'webp'
+        else:
+            mime_type = 'jpeg'
+        
+        base64_string = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/{mime_type};base64,{base64_string}"
+        
+        image_response = co_client.embed(
+            images=[data_uri],
+            model="embed-multilingual-v3.0",
+            input_type="search_document"
+        )
+        image_vec = np.array(image_response.embeddings[0])
+        
+        # 3. コサイン類似度wを計算
+        dot_product = np.dot(text_vec, image_vec)
+        norm_text = np.linalg.norm(text_vec)
+        norm_image = np.linalg.norm(image_vec)
+        w = dot_product / (norm_text * norm_image)
+        
+        # wを0-1の範囲にクリップ（負の値を避ける）
+        w = max(0, min(1, w))
+        
+        # 4. 重み付け統合ベクトルを計算
+        final_vec = w * text_vec + (1 - w) * image_vec
+        
+        print(f"    📊 Text-Image similarity: {w:.3f} for '{filename}'")
+        return final_vec
+        
     except Exception as e:
         print(f"    ⚠️  Warning: Could not generate multimodal embedding for '{filename}'. Skipping. Reason: {e}")
         return None
