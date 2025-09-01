@@ -74,32 +74,45 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
     mime_query = ' or '.join([f"mimeType='{mime}'" for mime in image_mime_types])
     
     for folder in all_folders:
-        # まず、フォルダ内の全ファイルを取得してデバッグ
-        debug_query = f"'{folder['id']}' in parents and trashed=false"
-        debug_results = drive_service.files().list(
-            q=debug_query,
-            fields="files(id, name, mimeType)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
-        all_files = debug_results.get('files', [])
-        if all_files:
+        try:
+            # まず、フォルダ内の全ファイルを取得してデバッグ
+            debug_query = f"'{folder['id']}' in parents and trashed=false"
+            print(f"  -> Querying folder '{folder['path'] or 'root'}' (ID: {folder['id']})")
+            print(f"     Query: {debug_query}")
+            
+            debug_results = drive_service.files().list(
+                q=debug_query,
+                fields="files(id, name, mimeType)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+            all_files = debug_results.get('files', [])
+            
             print(f"  -> Folder '{folder['path'] or 'root'}' contains {len(all_files)} files:")
-            for f in all_files[:5]:  # 最初の5ファイルを表示
-                print(f"     - {f['name']} (type: {f.get('mimeType', 'unknown')})")
-        
-        # 画像ファイルを検索
-        query = f"'{folder['id']}' in parents and ({mime_query}) and trashed=false"
-        results = drive_service.files().list(
-            q=query,
-            fields="files(id, name, webViewLink, mimeType)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
-        for image in results.get('files', []):
-            image['folder_path'] = folder['path']
-            all_images.append(image)
-            print(f"     -> Found image: {image['name']} (type: {image.get('mimeType')})")
+            if all_files:
+                for f in all_files[:5]:  # 最初の5ファイルを表示
+                    print(f"     - {f['name']} (type: {f.get('mimeType', 'unknown')})")
+            else:
+                print(f"     (No files found - possible permission issue)")
+            
+            # 画像ファイルを検索
+            query = f"'{folder['id']}' in parents and ({mime_query}) and trashed=false"
+            print(f"  -> Searching for images with query: {query}")
+            
+            results = drive_service.files().list(
+                q=query,
+                fields="files(id, name, webViewLink, mimeType)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+            for image in results.get('files', []):
+                image['folder_path'] = folder['path']
+                all_images.append(image)
+                print(f"     -> Found image: {image['name']} (type: {image.get('mimeType')})")
+                
+        except Exception as e:
+            print(f"  -> ERROR accessing folder '{folder['path'] or 'root'}' (ID: {folder['id']}): {e}")
+            print(f"     This might be a permission issue or the folder doesn't exist")
     
     print(f"  -> Found {len(all_images)} images in {len(all_folders)} folders")
     if all_images:
