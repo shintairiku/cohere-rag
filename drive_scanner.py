@@ -25,9 +25,14 @@ def _get_google_credentials():
 def _extract_folder_id(id_or_url: str) -> str:
     # ... (img_meta_processor_gdrive.pyから移動) ...
     if id_or_url.startswith('http'):
+        # /folders/xxx形式
         match = re.search(r'/folders/([a-zA-Z0-9_-]+)', id_or_url)
         if match: return match.group(1)
-        match = re.search(r'id=([a-zA-Z0-9_-]+)', id_or_url)
+        # open?id=xxx形式（共有リンク）
+        match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', id_or_url)
+        if match: return match.group(1)
+        # /d/xxx/形式
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)/', id_or_url)
         if match: return match.group(1)
     return id_or_url
 
@@ -38,6 +43,8 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
     creds = _get_google_credentials()
     drive_service = build('drive', 'v3', credentials=creds)
     folder_id = _extract_folder_id(drive_url)
+    
+    print(f"  -> Extracted folder ID: {folder_id} from URL: {drive_url}")
 
     # 全サブフォルダを取得
     folders_to_check = [{'id': folder_id, 'path': ''}]
@@ -54,8 +61,20 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
 
     # 全画像を取得
     all_images = []
+    # サポートする画像形式を拡張
+    image_mime_types = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/bmp',
+        'image/svg+xml'
+    ]
+    mime_query = ' or '.join([f"mimeType='{mime}'" for mime in image_mime_types])
+    
     for folder in all_folders:
-        query = f"'{folder['id']}' in parents and (mimeType='image/jpeg' or mimeType='image/png') and trashed=false"
+        query = f"'{folder['id']}' in parents and ({mime_query}) and trashed=false"
         results = drive_service.files().list(
             q=query,
             fields="files(id, name, webViewLink)",
@@ -65,5 +84,9 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
         for image in results.get('files', []):
             image['folder_path'] = folder['path']
             all_images.append(image)
+    
+    print(f"  -> Found {len(all_images)} images in {len(all_folders)} folders")
+    if all_images:
+        print(f"  -> Sample images: {[img['name'] for img in all_images[:3]]}")
             
     return all_images
