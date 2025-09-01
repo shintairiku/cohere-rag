@@ -41,13 +41,14 @@ steps:
   args:
     - 'run'
     - 'jobs'
-    - 'replace'
+    - 'update'
     - '${_JOB_NAME_VECTORIZE}'
     - '--image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
     - '--region=${_DEPLOY_REGION}'
     - '--service-account=marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
     - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
-    - '--tasks=1'
+    - '--task-timeout=600'
+    - '--parallelism=1'
     - '--max-retries=1'
 
 images:
