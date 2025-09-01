@@ -39,15 +39,17 @@ MAX_FILE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
 def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
     """
-    画像のファイルサイズが上限を超える場合、上限未満になるまで品質と解像度を下げてリサイズする。
+    画像のファイルサイズが上限を超える場合、サイズから必要なダウンサンプリング量を計算してリサイズする。
     """
     if len(image_content) <= MAX_FILE_SIZE_BYTES:
         return image_content
 
-    print(f"    📏 Large file detected ({len(image_content) / (1024*1024):.1f}MB > 5MB limit): {filename}. Resizing...")
+    original_size_mb = len(image_content) / (1024 * 1024)
+    print(f"    📏 Large file detected ({original_size_mb:.1f}MB > 5MB limit): {filename}. Calculating optimal resize...")
     
     try:
         img = Image.open(io.BytesIO(image_content))
+        original_width, original_height = img.size
         
         # RGBAやPモードの画像をRGBに変換
         if img.mode in ('RGBA', 'LA', 'P'):
@@ -55,24 +57,73 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
             background.paste(img, mask=img.split()[-1] if 'A' in img.mode else None)
             img = background
 
-        # 品質とスケールを段階的に試行
-        for scale in [1.0, 0.9, 0.8, 0.7, 0.6, 0.5]:
-            new_size = (int(img.width * scale), int(img.height * scale))
-            resized_img = img.resize(new_size, Image.Resampling.LANCZOS)
-            
-            for quality in [90, 80, 70, 60, 50]:
-                output = io.BytesIO()
-                resized_img.save(output, format='JPEG', quality=quality, optimize=True)
-                resized_data = output.getvalue()
-                
-                if len(resized_data) <= MAX_FILE_SIZE_BYTES:
-                    print(f"       ✅ Resized: {len(resized_data)/(1024*1024):.1f}MB (Scale: {scale*100}%, Quality: {quality})")
-                    return resized_data
+        # 目標サイズを4.8MBに設定（余裕を持たせる）
+        target_size_bytes = int(MAX_FILE_SIZE_BYTES * 0.96)  # 4.8MB
         
-        print(f"    ⚠️ Warning: Could not resize the image below the limit. Skipping.")
-        return None
+        # ファイルサイズの圧縮率を計算（線形近似）
+        # 画像のピクセル数はファイルサイズにほぼ比例すると仮定
+        size_ratio = target_size_bytes / len(image_content)
+        
+        # 必要な解像度スケールを計算（面積比の平方根）
+        scale_factor = min(1.0, (size_ratio ** 0.5))
+        
+        # 最小でも0.3倍までしかスケールダウンしない（品質保持のため）
+        scale_factor = max(0.3, scale_factor)
+        
+        new_width = int(original_width * scale_factor)
+        new_height = int(original_height * scale_factor)
+        
+        print(f"    🔢 Calculated scale factor: {scale_factor:.3f} ({original_width}x{original_height} -> {new_width}x{new_height})")
+        
+        # 計算されたサイズでリサイズ
+        resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # まず品質90で試す
+        output = io.BytesIO()
+        resized_img.save(output, format='JPEG', quality=90, optimize=True)
+        resized_data = output.getvalue()
+        
+        # まだ大きい場合は品質を段階的に下げる
+        quality = 90
+        while len(resized_data) > MAX_FILE_SIZE_BYTES and quality >= 50:
+            quality -= 10
+            output = io.BytesIO()
+            resized_img.save(output, format='JPEG', quality=quality, optimize=True)
+            resized_data = output.getvalue()
+            
+        final_size_mb = len(resized_data) / (1024 * 1024)
+        
+        if len(resized_data) <= MAX_FILE_SIZE_BYTES:
+            print(f"    ✅ Successfully resized: {original_size_mb:.1f}MB -> {final_size_mb:.1f}MB")
+            print(f"       Scale: {scale_factor:.1%}, Quality: {quality}, Size: {new_width}x{new_height}")
+            return resized_data
+        else:
+            # それでも大きい場合は、さらに解像度を下げる
+            print(f"    🔄 Still too large ({final_size_mb:.1f}MB), applying additional scaling...")
+            
+            # より強いスケールダウンを適用
+            additional_scale = 0.8
+            final_width = int(new_width * additional_scale)
+            final_height = int(new_height * additional_scale)
+            
+            final_img = resized_img.resize((final_width, final_height), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            final_img.save(output, format='JPEG', quality=60, optimize=True)
+            final_data = output.getvalue()
+            
+            final_size_mb = len(final_data) / (1024 * 1024)
+            
+            if len(final_data) <= MAX_FILE_SIZE_BYTES:
+                print(f"    ✅ Final resize successful: {original_size_mb:.1f}MB -> {final_size_mb:.1f}MB")
+                print(f"       Final size: {final_width}x{final_height}, Quality: 60")
+                return final_data
+            else:
+                print(f"    ⚠️ Warning: Could not resize {filename} below 5MB limit. Final size: {final_size_mb:.1f}MB. Skipping.")
+                return None
+        
     except Exception as e:
-        print(f"    ❌ Resize Error: {e}")
+        print(f"    ❌ Resize Error for {filename}: {e}")
+        traceback.print_exc()
         return None
 
 def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
