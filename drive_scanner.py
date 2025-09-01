@@ -108,7 +108,6 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
             for image in results.get('files', []):
                 image['folder_path'] = folder['path']
                 all_images.append(image)
-                print(f"     -> Found image: {image['name']} (type: {image.get('mimeType')})")
                 
         except Exception as e:
             print(f"  -> ERROR accessing folder '{folder['path'] or 'root'}' (ID: {folder['id']}): {e}")

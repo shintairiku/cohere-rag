@@ -199,7 +199,7 @@ def main():
         drive_service = build('drive', 'v3', credentials=drive_creds)
 
         for i, file_info in enumerate(files_to_process, 1):
-            print(f"  ({i}/{len(files_to_process)}) Processing: {file_info['folder_path']}/{file_info['name']}...")
+            print(f"  ({i}/{len(files_to_process)}) Processing image...")
             try:
                 # 1. Download image from Google Drive
                 request = drive_service.files().get_media(fileId=file_info['id'])
@@ -227,7 +227,7 @@ def main():
                     all_embeddings.append(result_data)
 
             except Exception as e:
-                print(f"    -> Error processing file {file_info['name']}: {e}")
+                print(f"    -> Error processing file: {e}")
         
         if not all_embeddings:
             print("⚠️  No embeddings were generated. Check for previous warnings.")
