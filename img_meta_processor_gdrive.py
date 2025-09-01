@@ -105,7 +105,7 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
         image_response = co_client.embed(
             images=[data_uri],
             model="embed-multilingual-v3.0",
-            input_type="search_document"
+            input_type="image"
         )
         image_vec = np.array(image_response.embeddings[0])
         
