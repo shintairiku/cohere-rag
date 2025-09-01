@@ -62,12 +62,24 @@ async def trigger_vectorization_job(request: VectorizeRequest):
             )
         )
         
-        operation = run_client.run_job(request=request_object)
+        response = run_client.run_job(request=request_object)
         
-        print(f"  -> Job execution started. Operation: {operation.name}")
+        # レスポンスの型とattributesをデバッグ
+        print(f"  -> Response type: {type(response)}")
+        print(f"  -> Response attributes: {dir(response)}")
+        
+        # nameまたは適切な属性を取得
+        if hasattr(response, 'name'):
+            execution_info = response.name
+        elif hasattr(response, 'metadata'):
+            execution_info = str(response.metadata)
+        else:
+            execution_info = f"Job triggered for {request.uuid}"
+        
+        print(f"  -> Job execution started. Info: {execution_info}")
         return {
             "message": f"Vectorization job started successfully for UUID: {request.uuid}", 
-            "operation_name": operation.name,
+            "execution_info": execution_info,
             "job_name": VECTORIZE_JOB_NAME
         }
 
