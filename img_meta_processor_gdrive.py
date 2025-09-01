@@ -23,7 +23,7 @@ UUID = os.getenv("UUID")
 DRIVE_URL = os.getenv("DRIVE_URL")
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-MAX_IMAGE_SIZE_MB = 20
+MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
 
 if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
     missing = [
@@ -44,7 +44,7 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
     if len(image_content) <= MAX_FILE_SIZE_BYTES:
         return image_content
 
-    print(f"    📏 Large file detected ({len(image_content) / (1024*1024):.1f}MB): {filename}. Resizing...")
+    print(f"    📏 Large file detected ({len(image_content) / (1024*1024):.1f}MB > 5MB limit): {filename}. Resizing...")
     
     try:
         img = Image.open(io.BytesIO(image_content))
