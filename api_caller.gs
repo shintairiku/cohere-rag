@@ -1,34 +1,45 @@
 /**
- * @fileoverview 企業別・類似画像検索プロダクトのGoogle Apps Script
- * 機能：
- * 1. カスタムメニューの作成 (ベクトル化実行)
- * 2. 会社一覧シートへの企業追加時にUUIDを自動生成
- * 3. 各企業シートでの検索トリガー(handleSheetEdit)によるAPI呼び出し
+ * @fileoverview Image Search System for Company-specific Google Sheets
+ * 
+ * This Google Apps Script provides functionality for:
+ * 1. Custom menu creation for vectorization operations
+ * 2. Automatic UUID generation when companies are added
+ * 3. Image search triggered by cell edits in company sheets
+ * 
+ * @version 1.0.0
+ * @author Claude Code Assistant
  */
 
-// --- ユーザー設定項目 ---
-// ご自身のCloud Runサービス(main-service)のURLに書き換えてください (末尾に / は不要です)
-const API_BASE_URL = "https://cohere-rag-742231208085.asia-northeast1.run.app"; 
-// --- ユーザー設定項目ここまで ---
-
-
-// --- グローバル設定 ---
-// 「会社一覧」シートに関する設定
-const COMPANY_LIST_SHEET_NAME = "会社一覧";
-const COMPANY_LIST_UUID_COL = 1;          // A列: UUID
-const COMPANY_LIST_NAME_COL = 2;          // B列: 会社名
-const COMPANY_LIST_DRIVE_URL_COL = 3;     // C列: GoogleドライブURL
-
-// 各企業シートに関する設定
-const PLATFORM_SHEET_PREFIX = "platform-";
-const SEARCH_QUERY_COL = 1;               // A列: 検索クエリ
-const SEARCH_TRIGGER_COL = 3;             // C列: 実行状況 (トリガー)
-const SEARCH_RESULT_START_COL = 4;        // D列: 結果出力の開始列
-
-// トリガーとして認識するテキスト
-const TRIGGER_TEXT_SIMILAR = "類似画像検索";
-const TRIGGER_TEXT_RANDOM = "ランダム画像検索";
-const TRIGGER_TEXT_NOT_EXECUTED = "未実行";
+/**
+ * Configuration object for the application
+ */
+const Config = {
+  // API Configuration - Update this URL to match your Cloud Run service
+  API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
+  
+  // Company List Sheet Configuration
+  COMPANY_LIST: {
+    SHEET_NAME: "会社一覧",
+    UUID_COL: 1,        // A列: UUID
+    NAME_COL: 2,        // B列: 会社名  
+    DRIVE_URL_COL: 3    // C列: GoogleドライブURL
+  },
+  
+  // Platform Sheet Configuration
+  PLATFORM: {
+    SHEET_PREFIX: "platform-",
+    SEARCH_QUERY_COL: 1,      // A列: 検索クエリ
+    SEARCH_TRIGGER_COL: 3,    // C列: 実行状況 (トリガー)
+    SEARCH_RESULT_START_COL: 4 // D列: 結果出力の開始列
+  },
+  
+  // Trigger Text Constants
+  TRIGGERS: {
+    SIMILAR: "類似画像検索",
+    RANDOM: "ランダム画像検索", 
+    NOT_EXECUTED: "未実行"
+  }
+};
 
 
 /**
@@ -66,7 +77,7 @@ function handleSheetEdit(e) {
     Logger.log(`- Old Value (e.oldValue): ${e.oldValue}`);
 
     // --- 検索シートでの処理 ---
-    if (sheetName.startsWith(PLATFORM_SHEET_PREFIX) && col === SEARCH_TRIGGER_COL) {
+    if (sheetName.startsWith(Config.PLATFORM.SHEET_PREFIX) && col === Config.PLATFORM.SEARCH_TRIGGER_COL) {
       Logger.log("-> Condition Met: This is a search trigger edit.");
       
       if (row === 1) {
