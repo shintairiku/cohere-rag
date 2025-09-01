@@ -3,11 +3,11 @@ steps:
 # --- 1. 司令塔 (main-service) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build Main Service Image'
-  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}', '.', '-f', 'Dockerfile']
+  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}', '.', '-f', 'Dockerfile']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Push Main Service Image'
-  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}']
+  args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}']
 
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   id: 'Deploy Main Service'
@@ -15,48 +15,25 @@ steps:
   args:
     - 'run'
     - 'deploy'
-    - '${_SERVICE_NAME_MAIN}'
-    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
-    - '--region=${_GCP_REGION}'
+    - '${_SERVICE_NAME}'
+    - '--image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
+    - '--region=${_DEPLOY_REGION}'
     - '--platform=managed'
     - '--allow-unauthenticated'
-    - '--service-account=${_SERVICE_ACCOUNT}'
-    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=${_JOB_NAME_VECTORIZE},GCP_REGION=${_GCP_REGION}'
+    - '--service-account=marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
+    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=embedding_storage,COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=cohere-rag-vectorize-job,GCP_REGION=${_DEPLOY_REGION}'
 
 # --- 2. 作業員 (vectorize-job) のビルド＆デプロイ ---
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Build Vectorize Job Image'
-  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
-
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Push Vectorize Job Image'
-  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}']
-
-- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-  id: 'Deploy Vectorize Job'
-  entrypoint: gcloud
-  args:
-    - 'run'
-    - 'jobs'
-    - 'replace' # Use 'replace' to create or update the job definition
-    - '${_JOB_NAME_VECTORIZE}'
-    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
-    - '--region=${_GCP_REGION}'
-    - '--service-account=${_SERVICE_ACCOUNT}'
-    - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
-    - '--tasks=1'      # This job runs as a single task
-    - '--max-retries=1' # How many times to retry if it fails
-
-substitutions:
-  _SERVICE_NAME_MAIN: 'cohere-rag'  # 実際のサービス名に合わせる
-  _JOB_NAME_VECTORIZE: 'cohere-rag-vectorize-job'
-  _ARTIFACT_REGISTRY_REPO: 'cloud-run-source-deploy'
-  _GCS_BUCKET_NAME: 'embedding_storage'
-  _GCP_REGION: 'asia-northeast1'
-  _SERVICE_ACCOUNT: 'marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
-  # _COHERE_API_KEY はCloud Buildトリガーの変数として設定します
+# 注意: 現在はトリガーの置換変数不足によりJob部分をコメントアウト
+# 必要な変数: _JOB_NAME_VECTORIZE, _GCS_BUCKET_NAME を追加後に有効化
+# - name: 'gcr.io/cloud-builders/docker'
+#   id: 'Build Vectorize Job Image'
+#   args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/cohere-rag-vectorize-job:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
+# 
+# - name: 'gcr.io/cloud-builders/docker'
+#   id: 'Push Vectorize Job Image'
+#   args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/cohere-rag-vectorize-job:${COMMIT_SHA}']
 
 images:
-- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_SERVICE_NAME_MAIN}:${COMMIT_SHA}'
-- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
+- '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
 
