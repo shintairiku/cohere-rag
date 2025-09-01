@@ -6,97 +6,103 @@ from typing import List, Dict, Optional
 import numpy as np
 from google.cloud import storage
 
+
 def _get_storage_client():
     """
-    環境に応じてGCSクライアントを初期化するヘルパー関数。
+    Initializes a GCS client based on the environment.
     """
     environment = os.getenv("ENVIRONMENT", "local")
-    key_file = "marketing-automation-461305-2acf4965e0b0.json" # ローカル開発用のキーファイル
+    # NOTE: This key file is only used for local development.
+    # In production on Cloud Run, it uses the attached service account.
+    key_file = "marketing-automation-461305-2acf4965e0b0.json" 
 
     if environment == "production":
-        print("🌐 プロダクション環境: デフォルト認証でGCSクライアントを初期化します。")
+        print("🌐 Production environment: Initializing GCS client with default credentials.")
         return storage.Client()
     else:
-        print(f"🏠 ローカル環境: '{key_file}' を探しています...")
+        print(f"🏠 Local environment: Looking for '{key_file}'...")
         if os.path.exists(key_file):
-            print(f"   ✅ キーファイル '{key_file}' を使用します。")
+            print(f"   ✅ Using key file '{key_file}'.")
             return storage.Client.from_service_account_json(key_file)
         else:
-            print(f"   ⚠️ キーファイルが見つかりません。デフォルト認証にフォールバックします。")
+            print(f"   ⚠️ Key file not found. Falling back to default credentials.")
             return storage.Client()
 
 
 class ImageSearcher:
     """
-    指定された企業のベクトルデータ（JSON）を読み込み、画像検索を実行するクラス。
-    インスタンスは企業（UUID）ごとに生成されることを想定しています。
+    A class to load vector data for a specific company (by UUID) and perform searches.
+    Instances are expected to be created for each company.
     """
-    def __init__(self, uuid: str, embeddings_dir: str = 'vector_data', bucket_name: Optional[str] = None):
+    def __init__(self, uuid: str, bucket_name: Optional[str] = None):
+        """
+        Initializes the searcher for a given UUID.
+        
+        Args:
+            uuid: The UUID of the company.
+            bucket_name: The GCS bucket name where vector data is stored.
+        """
         self.uuid = uuid
-        self.embeddings_dir = embeddings_dir
         self.bucket_name = bucket_name
         self.embeddings_data: List[Dict] = []
         self.embeddings_matrix: Optional[np.ndarray] = None
         
-        # ヘルパー関数経由でクライアントを初期化
-        self.storage_client = _get_storage_client()
+        self._load_data()
 
-        print(f"🔍 ImageSearcher initialized for UUID: {uuid}")
-        self.load_data()
-
-    def load_data(self):
+    def _load_data(self):
         """
-        UUIDに対応するベクトルデータをGCSまたはローカルから読み込む。
+        Loads the vector data from a JSON file in GCS.
         """
-        filename = f"{self.uuid}.json"
-        print(f"🔄 検索データ '{filename}' を読み込んでいます...")
+        if not self.bucket_name:
+            raise ValueError("GCS bucket name is not provided.")
+        
+        file_path = f"{self.uuid}.json"
+        print(f"🔍 Loading vector data for UUID '{self.uuid}' from gs://{self.bucket_name}/{file_path}")
 
         try:
-            content = None
-            if self.bucket_name:
-                bucket = self.storage_client.bucket(self.bucket_name)
-                blob = bucket.blob(filename)
-                if blob.exists():
-                    content = blob.download_as_text()
-                    print(f"☁️ GCSから '{filename}' をダウンロードしました。")
-                else:
-                    raise FileNotFoundError(f"GCSバケット '{self.bucket_name}' に '{filename}' が見つかりません。")
-            else:
-                local_path = os.path.join(self.embeddings_dir, filename)
-                if os.path.exists(local_path):
-                    with open(local_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    print(f"📄 ローカルから '{local_path}' を読み込みました。")
-                else:
-                    raise FileNotFoundError(f"ローカルディレクトリ '{self.embeddings_dir}' に '{filename}' が見つかりません。")
-            
-            self.embeddings_data = json.loads(content)
-            
-            embeddings = [item['embedding'] for item in self.embeddings_data]
-            self.embeddings_matrix = np.array(embeddings, dtype=np.float32)
-            print(f"✅ データ読み込み完了。{len(self.embeddings_data)}件のベクトルをロードしました。")
+            storage_client = _get_storage_client()
+            bucket = storage_client.bucket(self.bucket_name)
+            blob = bucket.blob(file_path)
 
-        except FileNotFoundError as e:
-            print(f"❌ {e}")
-            raise e
+            if not blob.exists():
+                print(f"❌ ERROR: Vector file not found at gs://{self.bucket_name}/{file_path}")
+                raise FileNotFoundError(f"Vector data for UUID '{self.uuid}' not found.")
+
+            json_data = blob.download_as_string()
+            self.embeddings_data = json.loads(json_data)
+            
+            if self.embeddings_data:
+                # Create a NumPy matrix from the embeddings for efficient calculation
+                self.embeddings_matrix = np.array([item['embedding'] for item in self.embeddings_data])
+                print(f"✅ Successfully loaded and processed {len(self.embeddings_data)} vectors.")
+            else:
+                print("⚠️  Warning: The vector file is empty.")
+
         except Exception as e:
-            print(f"❌ データの読み込みまたは解析中にエラーが発生しました: {e}")
+            print(f"❌ Failed to load or parse data for UUID {self.uuid}")
             traceback.print_exc()
-            raise RuntimeError(f"Failed to load or parse data for UUID {self.uuid}") from e
+            # Re-raise the exception to be handled by the API layer
+            raise e
             
     def search_images(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
-        """類似画像検索を実行"""
-        print(f"🔍 Performing similarity search for top_k={top_k}")
+        """
+        Performs a similarity search.
         
+        Args:
+            query_embedding: The vector of the search query.
+            top_k: The number of top results to return.
+
+        Returns:
+            A list of dictionaries, each containing result info.
+        """
         if self.embeddings_matrix is None or len(self.embeddings_matrix) == 0:
-            print("⚠️ No embeddings data available for search")
             return []
 
-        # コサイン類似度計算
+        # Calculate cosine similarity
         similarities = np.dot(self.embeddings_matrix, query_embedding) / \
                        (np.linalg.norm(self.embeddings_matrix, axis=1) * np.linalg.norm(query_embedding))
         
-        # 上位k件を取得
+        # Get the indices of the top-k most similar items
         top_k_indices = np.argsort(similarities)[::-1][:top_k]
         
         results = []
@@ -107,19 +113,20 @@ class ImageSearcher:
                 "similarity": float(similarities[i])
             }
             results.append(result)
-        
-        print(f"✅ Found {len(results)} similar images")
-        if results:
-            print(f"   Top similarity: {results[0]['similarity']:.4f}")
             
         return results
 
     def random_image_search(self, count: int) -> List[Dict]:
-        """ランダム画像検索を実行"""
-        print(f"🎲 Performing random search for count={count}")
+        """
+        Performs a random search.
         
+        Args:
+            count: The number of random items to return.
+            
+        Returns:
+            A list of dictionaries, each containing result info.
+        """
         if not self.embeddings_data:
-            print("⚠️ No embeddings data available for random search")
             return []
         
         num_to_sample = min(count, len(self.embeddings_data))
@@ -130,9 +137,8 @@ class ImageSearcher:
             result = {
                 "filename": self.embeddings_data[i].get("filename"),
                 "filepath": self.embeddings_data[i].get("filepath"),
-                "similarity": None  # ランダム検索では類似度なし
+                "similarity": None  # No similarity score for random search
             }
             results.append(result)
         
-        print(f"✅ Selected {len(results)} random images")
         return results
