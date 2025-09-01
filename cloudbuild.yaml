@@ -47,7 +47,7 @@ steps:
     - '--region=${_DEPLOY_REGION}'
     - '--service-account=marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
     - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
-    - '--task-timeout=600'
+    - '--task-timeout=36000'
     - '--parallelism=1'
     - '--max-retries=1'
 
