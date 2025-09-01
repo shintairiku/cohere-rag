@@ -1,4 +1,7 @@
 # Cloud Run サービス (main) と Cloud Run ジョブ (vectorize-job) をデプロイする構成
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
 # --- 1. 司令塔 (main-service) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
