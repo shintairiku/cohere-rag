@@ -24,16 +24,30 @@ steps:
     - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=embedding_storage,COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=cohere-rag-vectorize-job,GCP_REGION=${_DEPLOY_REGION}'
 
 # --- 2. 作業員 (vectorize-job) のビルド＆デプロイ ---
-# 注意: 現在はトリガーの置換変数不足によりJob部分をコメントアウト
-# 必要な変数: _JOB_NAME_VECTORIZE, _GCS_BUCKET_NAME を追加後に有効化
-# - name: 'gcr.io/cloud-builders/docker'
-#   id: 'Build Vectorize Job Image'
-#   args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/cohere-rag-vectorize-job:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
-# 
-# - name: 'gcr.io/cloud-builders/docker'
-#   id: 'Push Vectorize Job Image'
-#   args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/cohere-rag-vectorize-job:${COMMIT_SHA}']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build Vectorize Job Image'
+  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Vectorize Job Image'
+  args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}']
+
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Deploy Vectorize Job'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'jobs'
+    - 'replace'
+    - '${_JOB_NAME_VECTORIZE}'
+    - '--image=${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
+    - '--region=${_DEPLOY_REGION}'
+    - '--service-account=marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
+    - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
+    - '--tasks=1'
+    - '--max-retries=1'
 
 images:
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
+- '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
 
