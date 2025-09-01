@@ -41,6 +41,7 @@ class ImageSearcher:
         # ヘルパー関数経由でクライアントを初期化
         self.storage_client = _get_storage_client()
 
+        print(f"🔍 ImageSearcher initialized for UUID: {uuid}")
         self.load_data()
 
     def load_data(self):
@@ -84,12 +85,18 @@ class ImageSearcher:
             raise RuntimeError(f"Failed to load or parse data for UUID {self.uuid}") from e
             
     def search_images(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
+        """類似画像検索を実行"""
+        print(f"🔍 Performing similarity search for top_k={top_k}")
+        
         if self.embeddings_matrix is None or len(self.embeddings_matrix) == 0:
+            print("⚠️ No embeddings data available for search")
             return []
 
+        # コサイン類似度計算
         similarities = np.dot(self.embeddings_matrix, query_embedding) / \
                        (np.linalg.norm(self.embeddings_matrix, axis=1) * np.linalg.norm(query_embedding))
         
+        # 上位k件を取得
         top_k_indices = np.argsort(similarities)[::-1][:top_k]
         
         results = []
@@ -100,11 +107,19 @@ class ImageSearcher:
                 "similarity": float(similarities[i])
             }
             results.append(result)
+        
+        print(f"✅ Found {len(results)} similar images")
+        if results:
+            print(f"   Top similarity: {results[0]['similarity']:.4f}")
             
         return results
 
     def random_image_search(self, count: int) -> List[Dict]:
+        """ランダム画像検索を実行"""
+        print(f"🎲 Performing random search for count={count}")
+        
         if not self.embeddings_data:
+            print("⚠️ No embeddings data available for random search")
             return []
         
         num_to_sample = min(count, len(self.embeddings_data))
@@ -115,8 +130,9 @@ class ImageSearcher:
             result = {
                 "filename": self.embeddings_data[i].get("filename"),
                 "filepath": self.embeddings_data[i].get("filepath"),
-                "similarity": None
+                "similarity": None  # ランダム検索では類似度なし
             }
             results.append(result)
-            
+        
+        print(f"✅ Selected {len(results)} random images")
         return results

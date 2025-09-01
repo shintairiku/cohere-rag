@@ -98,26 +98,44 @@ def search_images_api(
     trigger: str = Query("類似画像検索"),
 ):
     """Performs image search using the specified vector data."""
+    print(f"🔍 Search API called: UUID={uuid}, trigger={trigger}, top_k={top_k}")
+    if q:
+        print(f"   Query: '{q}'")
+    
     try:
         searcher = ImageSearcher(uuid=uuid, bucket_name=GCS_BUCKET_NAME)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
+        print(f"❌ Vector data not found: {e}")
         raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
     
-    # ... (Search logic remains the same)
     try:
         if trigger == "類似画像検索":
             if not q:
+                print("❌ Missing query parameter for similarity search")
                 raise HTTPException(status_code=400, detail="Query 'q' is required for similar image search.")
+            
+            print(f"🧠 Generating embedding for query: '{q}'")
             response = co.embed(texts=[q], model="embed-multilingual-v3.0", input_type="search_query")
             query_embedding = response.embeddings[0]
+            
             results = searcher.search_images(query_embedding=query_embedding, top_k=top_k)
+            print(f"✅ Similarity search completed. Returning {len(results)} results")
             return {"query": q, "results": results}
+            
         elif trigger == "ランダム画像検索":
             results = searcher.random_image_search(count=top_k)
+            print(f"✅ Random search completed. Returning {len(results)} results")
             return {"query": "ランダム検索", "results": results}
+            
         else:
+            print(f"❌ Invalid trigger: {trigger}")
             raise HTTPException(status_code=400, detail=f"Invalid trigger: {trigger}")
+            
+    except HTTPException:
+        # HTTPExceptionは再発生
+        raise
     except Exception as e:
+        print(f"❌ Unexpected error during search: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during search: {str(e)}")
 
