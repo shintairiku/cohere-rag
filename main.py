@@ -8,7 +8,7 @@ This FastAPI application provides endpoints for:
 
 import os
 import traceback
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import cohere
 from dotenv import load_dotenv
@@ -60,6 +60,15 @@ class VectorizeRequest(BaseModel):
     """Request model for vectorization endpoint."""
     uuid: str
     drive_url: str
+
+
+class SearchRequest(BaseModel):
+    """Request model for search endpoint."""
+    uuid: str
+    q: Optional[str] = None
+    top_k: int = 5
+    trigger: str = "類似画像検索"
+    exclude_files: List[str] = []
 
 
 class JobService:
@@ -150,7 +159,7 @@ class SearchService:
         self.config = config
         self.cohere_client = cohere_client
     
-    def search_similar_images(self, uuid: str, query: str, top_k: int) -> Dict:
+    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None) -> Dict:
         """
         Search for similar images using text query.
         
@@ -158,11 +167,14 @@ class SearchService:
             uuid: Company UUID
             query: Search query text
             top_k: Number of results to return
+            exclude_files: List of filenames to exclude from search results
             
         Returns:
             Dict with search results
         """
         print(f"🧠 Generating embedding for query: '{query}'")
+        if exclude_files:
+            print(f"📋 Excluding {len(exclude_files)} files from search")
         
         try:
             searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
@@ -177,29 +189,33 @@ class SearchService:
         )
         query_embedding = response.embeddings[0]
         
-        results = searcher.search_images(query_embedding=query_embedding, top_k=top_k)
+        results = searcher.search_images(query_embedding=query_embedding, top_k=top_k, exclude_files=exclude_files)
         print(f"✅ Similarity search completed. Returning {len(results)} results")
         
         return {"query": query, "results": results}
     
-    def search_random_images(self, uuid: str, count: int) -> Dict:
+    def search_random_images(self, uuid: str, count: int, exclude_files: List[str] = None) -> Dict:
         """
         Search for random images.
         
         Args:
             uuid: Company UUID
             count: Number of random images to return
+            exclude_files: List of filenames to exclude from search results
             
         Returns:
             Dict with search results
         """
+        if exclude_files:
+            print(f"📋 Excluding {len(exclude_files)} files from random search")
+            
         try:
             searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
         except FileNotFoundError as e:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        results = searcher.random_image_search(count=count)
+        results = searcher.random_image_search(count=count, exclude_files=exclude_files)
         print(f"✅ Random search completed. Returning {len(results)} results")
         
         return {"query": "ランダム検索", "results": results}
@@ -235,6 +251,52 @@ def search_images_api(
         else:
             print(f"❌ Invalid trigger: {trigger}")
             raise HTTPException(status_code=400, detail=f"Invalid trigger: {trigger}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error during search: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during search: {str(e)}")
+
+
+@app.post("/search", response_model=List[Dict])
+def search_images_post(request: SearchRequest):
+    """
+    Performs image search using the specified vector data (POST version).
+    Returns results as a list (compatible with api_caller.gs).
+    """
+    print(f"🔍 Search API (POST) called: UUID={request.uuid}, trigger={request.trigger}, top_k={request.top_k}")
+    if request.q:
+        print(f"   Query: '{request.q}'")
+    if request.exclude_files:
+        print(f"   Excluding {len(request.exclude_files)} files")
+    
+    try:
+        if request.trigger == "類似画像検索":
+            if not request.q:
+                print("❌ Missing query parameter for similarity search")
+                raise HTTPException(status_code=400, detail="Query 'q' is required for similar image search.")
+            
+            result = search_service.search_similar_images(
+                request.uuid, 
+                request.q, 
+                request.top_k,
+                request.exclude_files
+            )
+            return result.get("results", [])
+            
+        elif request.trigger == "ランダム画像検索":
+            result = search_service.search_random_images(
+                request.uuid, 
+                request.top_k,
+                request.exclude_files
+            )
+            return result.get("results", [])
+            
+        else:
+            print(f"❌ Invalid trigger: {request.trigger}")
+            raise HTTPException(status_code=400, detail=f"Invalid trigger: {request.trigger}")
             
     except HTTPException:
         raise

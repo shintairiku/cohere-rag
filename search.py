@@ -116,13 +116,14 @@ class ImageSearcher:
             traceback.print_exc()
             raise Exception(f"Failed to load vector data for UUID {self.uuid}") from e
             
-    def search_images(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
+    def search_images(self, query_embedding: np.ndarray, top_k: int, exclude_files: Optional[List[str]] = None) -> List[Dict]:
         """
         Performs a similarity search using cosine similarity.
         
         Args:
             query_embedding: The vector of the search query
             top_k: The number of top results to return
+            exclude_files: Optional list of filenames to exclude from search candidates
             
         Returns:
             List of dictionaries containing search results with similarity scores
@@ -133,25 +134,52 @@ class ImageSearcher:
 
         print(f"🔍 Performing similarity search for top_k={top_k}")
         
+        # Convert exclude_files to a set for faster lookup
+        exclude_set = set(exclude_files) if exclude_files else set()
+        
         try:
-            # Calculate cosine similarity
-            similarities = np.dot(self.embeddings_matrix, query_embedding) / (
-                np.linalg.norm(self.embeddings_matrix, axis=1) * np.linalg.norm(query_embedding)
+            # Filter embeddings data to exclude specified files BEFORE similarity calculation
+            valid_indices = []
+            excluded_count = 0
+            
+            for i, item in enumerate(self.embeddings_data):
+                filename = item.get("filename")
+                if filename in exclude_set:
+                    excluded_count += 1
+                    print(f"   Excluding from search candidates: {filename}")
+                else:
+                    valid_indices.append(i)
+            
+            if not valid_indices:
+                print("⚠️ No search candidates available after applying exclusion list")
+                return []
+            
+            print(f"   Search candidates: {len(valid_indices)} (excluded {excluded_count} files)")
+            
+            # Create filtered embeddings matrix from valid candidates only
+            filtered_embeddings = self.embeddings_matrix[valid_indices]
+            
+            # Calculate cosine similarity only for valid candidates
+            similarities = np.dot(filtered_embeddings, query_embedding) / (
+                np.linalg.norm(filtered_embeddings, axis=1) * np.linalg.norm(query_embedding)
             )
             
-            # Get the indices of the top-k most similar items
-            top_k_indices = np.argsort(similarities)[::-1][:top_k]
+            # Get top-k indices sorted by similarity (descending)
+            num_results = min(top_k, len(similarities))
+            top_k_indices = np.argsort(similarities)[::-1][:num_results]
             
             results = []
-            for i in top_k_indices:
+            for idx in top_k_indices:
+                # Map back to original embeddings_data index
+                original_idx = valid_indices[idx]
                 result = {
-                    "filename": self.embeddings_data[i].get("filename"),
-                    "filepath": self.embeddings_data[i].get("filepath"),
-                    "similarity": float(similarities[i])
+                    "filename": self.embeddings_data[original_idx].get("filename"),
+                    "filepath": self.embeddings_data[original_idx].get("filepath"),
+                    "similarity": float(similarities[idx])
                 }
                 results.append(result)
             
-            print(f"✅ Found {len(results)} similar images")
+            print(f"✅ Found {len(results)} similar images from {len(valid_indices)} candidates")
             if results:
                 print(f"   Top similarity: {results[0]['similarity']:.4f}")
                 
@@ -162,12 +190,13 @@ class ImageSearcher:
             traceback.print_exc()
             return []
 
-    def random_image_search(self, count: int) -> List[Dict]:
+    def random_image_search(self, count: int, exclude_files: Optional[List[str]] = None) -> List[Dict]:
         """
         Performs a random search.
         
         Args:
             count: The number of random items to return
+            exclude_files: Optional list of filenames to exclude from search candidates
             
         Returns:
             List of dictionaries containing randomly selected results
@@ -178,12 +207,31 @@ class ImageSearcher:
         
         print(f"🎲 Performing random search for count={count}")
         
+        # Convert exclude_files to a set for faster lookup
+        exclude_set = set(exclude_files) if exclude_files else set()
+        if exclude_set:
+            print(f"   Excluding {len(exclude_set)} files from random selection")
+        
         try:
-            num_to_sample = min(count, len(self.embeddings_data))
-            random_indices = np.random.choice(len(self.embeddings_data), num_to_sample, replace=False)
+            # Filter out excluded files first
+            valid_indices = []
+            for i, item in enumerate(self.embeddings_data):
+                filename = item.get("filename")
+                if filename not in exclude_set:
+                    valid_indices.append(i)
+                else:
+                    print(f"   Excluding from pool: {filename}")
+            
+            if not valid_indices:
+                print("⚠️ No images available after applying exclusion list")
+                return []
+            
+            # Sample from valid indices only
+            num_to_sample = min(count, len(valid_indices))
+            selected_indices = np.random.choice(valid_indices, num_to_sample, replace=False)
             
             results = []
-            for i in random_indices:
+            for i in selected_indices:
                 result = {
                     "filename": self.embeddings_data[i].get("filename"),
                     "filepath": self.embeddings_data[i].get("filepath"),
@@ -191,7 +239,8 @@ class ImageSearcher:
                 }
                 results.append(result)
             
-            print(f"✅ Selected {len(results)} random images")
+            excluded_count = len(self.embeddings_data) - len(valid_indices)
+            print(f"✅ Selected {len(results)} random images from {len(valid_indices)} available (excluded {excluded_count})")
             return results
             
         except Exception as e:
