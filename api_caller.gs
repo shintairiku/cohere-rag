@@ -85,10 +85,10 @@ function handleSheetEdit(e) {
         return;
       }
 
-      if (value === TRIGGER_TEXT_SIMILAR || value === TRIGGER_TEXT_RANDOM) {
+      if (value === Config.TRIGGERS.SIMILAR || value === Config.TRIGGERS.RANDOM) {
         Logger.log(`-> Action: Starting search for trigger "${value}" on row ${row}.`);
         performSearch(sheet, row, value);
-      } else if (value === TRIGGER_TEXT_NOT_EXECUTED) {
+      } else if (value === Config.TRIGGERS.NOT_EXECUTED) {
         Logger.log(`-> Action: Clearing results for row ${row}.`);
         clearPreviousResults(sheet, row);
       } else {
@@ -97,14 +97,14 @@ function handleSheetEdit(e) {
     }
 
     // --- 会社一覧シートでの処理 (UUID自動生成) ---
-    if (sheetName === COMPANY_LIST_SHEET_NAME && col === COMPANY_LIST_NAME_COL) {
+    if (sheetName === Config.COMPANY_LIST.SHEET_NAME && col === Config.COMPANY_LIST.NAME_COL) {
        Logger.log("-> Condition Met: This is a company name edit for UUID generation.");
        if (row === 1) {
          Logger.log("-> Action: Ignored (Header row).");
          return;
        }
        
-       const uuidCell = sheet.getRange(row, COMPANY_LIST_UUID_COL);
+       const uuidCell = sheet.getRange(row, Config.COMPANY_LIST.UUID_COL);
        if (!uuidCell.getValue()) {
          const newUuid = Utilities.getUuid();
          uuidCell.setValue(newUuid);
@@ -133,7 +133,7 @@ function handleSheetEdit(e) {
 function performSearch(sheet, row, triggerValue) {
   Logger.log(`[performSearch] Starting search for row ${row}, trigger: ${triggerValue}`);
   
-  const statusCell = sheet.getRange(row, SEARCH_TRIGGER_COL);
+  const statusCell = sheet.getRange(row, Config.PLATFORM.SEARCH_TRIGGER_COL);
   
   // プルダウンセルに安全に値を設定する関数
   function safeSetCellValue(cell, value) {
@@ -180,10 +180,10 @@ function performSearch(sheet, row, triggerValue) {
     Logger.log(`[performSearch] Found UUID: ${companyUuid}`);
 
     Logger.log(`[performSearch] Step 4: Getting search query`);
-    const query = sheet.getRange(row, SEARCH_QUERY_COL).getValue();
+    const query = sheet.getRange(row, Config.PLATFORM.SEARCH_QUERY_COL).getValue();
     Logger.log(`[performSearch] Query: "${query}"`);
     
-    if (triggerValue === TRIGGER_TEXT_SIMILAR && !query) {
+    if (triggerValue === Config.TRIGGERS.SIMILAR && !query) {
       throw new Error("類似画像検索には検索クエリが必要です。");
     }
 
@@ -215,19 +215,19 @@ function performSearch(sheet, row, triggerValue) {
  */
 function getUuidForSheet(sheet) {
   const sheetName = sheet.getName();
-  if (!sheetName.startsWith(PLATFORM_SHEET_PREFIX)) {
+  if (!sheetName.startsWith(Config.PLATFORM.SHEET_PREFIX)) {
     return null;
   }
-  const companyName = sheetName.substring(PLATFORM_SHEET_PREFIX.length);
+  const companyName = sheetName.substring(Config.PLATFORM.SHEET_PREFIX.length);
 
-  const companyListSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(COMPANY_LIST_SHEET_NAME);
+  const companyListSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
   if (!companyListSheet) {
-    SpreadsheetApp.getUi().alert(`エラー: '${COMPANY_LIST_SHEET_NAME}' シートが見つかりません。`);
+    SpreadsheetApp.getUi().alert(`エラー: '${Config.COMPANY_LIST.SHEET_NAME}' シートが見つかりません。`);
     return null;
   }
   
-  const data = companyListSheet.getRange(2, COMPANY_LIST_NAME_COL, companyListSheet.getLastRow() - 1, 1).getValues();
-  const uuids = companyListSheet.getRange(2, COMPANY_LIST_UUID_COL, companyListSheet.getLastRow() - 1, 1).getValues();
+  const data = companyListSheet.getRange(2, Config.COMPANY_LIST.NAME_COL, companyListSheet.getLastRow() - 1, 1).getValues();
+  const uuids = companyListSheet.getRange(2, Config.COMPANY_LIST.UUID_COL, companyListSheet.getLastRow() - 1, 1).getValues();
 
   for (let i = 0; i < data.length; i++) {
     if (data[i][0] === companyName) {
@@ -249,7 +249,7 @@ function callSearchApi(uuid, query, trigger) {
   const encodedQuery = encodeURIComponent(query || "");
   const encodedTrigger = encodeURIComponent(trigger);
   
-  const apiUrl = `${API_BASE_URL}/search?uuid=${uuid}&q=${encodedQuery}&top_k=${topK}&trigger=${encodedTrigger}`;
+  const apiUrl = `${Config.API_BASE_URL}/search?uuid=${uuid}&q=${encodedQuery}&top_k=${topK}&trigger=${encodedTrigger}`;
   
   const params = {
     method: "get",
@@ -282,7 +282,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
   Logger.log(`[writeResultsToSheet] Starting to write ${results.length} results to row ${row}`);
   
   try {
-    const isRandom = (triggerValue === TRIGGER_TEXT_RANDOM);
+    const isRandom = (triggerValue === Config.TRIGGERS.RANDOM);
     const MAX_RESULTS = 5;
 
     // 1. 書き込むためのデータ配列と、リンク情報を準備する
@@ -298,7 +298,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
         
         // データ配列にはプレーンテキストを追加
         rowData.push(displayText);
-        linkInfo.push({ url: fileUrl, text: displayText, col: SEARCH_RESULT_START_COL + i * 3 });
+        linkInfo.push({ url: fileUrl, text: displayText, col: Config.PLATFORM.SEARCH_RESULT_START_COL + i * 3 });
 
         // 類似度
         if (!isRandom && result.similarity !== null && typeof result.similarity === 'number') {
@@ -318,7 +318,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
 
     // 2. 準備したデータを対象範囲に一度に書き込む
     Logger.log(`[writeResultsToSheet] Step 2: Writing data to range`);
-    const targetRange = sheet.getRange(row, SEARCH_RESULT_START_COL, 1, MAX_RESULTS * 3);
+    const targetRange = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, MAX_RESULTS * 3);
     Logger.log(`[writeResultsToSheet] Target range: ${targetRange.getA1Notation()}`);
     targetRange.setValues([rowData]);
     Logger.log(`[writeResultsToSheet] Successfully wrote data to range`);
@@ -346,7 +346,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
       // チェックボックスを設定
       if (i < results.length) {
         try {
-          const checkboxCell = sheet.getRange(row, SEARCH_RESULT_START_COL + colOffset + 2);
+          const checkboxCell = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL + colOffset + 2);
           checkboxCell.insertCheckboxes();
           Logger.log(`[writeResultsToSheet] Set checkbox for result ${i}`);
         } catch (checkboxError) {
@@ -373,7 +373,7 @@ function clearPreviousResults(sheet, row) {
   Logger.log(`[clearPreviousResults] Clearing results for row ${row}`);
   try {
     // D列から15列分クリア (5結果 * 3列)
-    const range = sheet.getRange(row, SEARCH_RESULT_START_COL, 1, 15);
+    const range = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, 15);
     Logger.log(`[clearPreviousResults] Target range: ${range.getA1Notation()}`);
     
     // 書式、内容、データ検証ルールなどすべてをクリアする
@@ -395,11 +395,11 @@ function clearPreviousResults(sheet, row) {
  * カスタムメニューから呼び出され、選択行のベクトル化をトリガーする
  */
 function callVectorizeApi() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(COMPANY_LIST_SHEET_NAME);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
   const activeCell = sheet.getActiveCell();
   
-  if (!sheet || sheet.getName() !== COMPANY_LIST_SHEET_NAME) {
-    SpreadsheetApp.getUi().alert(`'${COMPANY_LIST_SHEET_NAME}'シートから実行してください。`);
+  if (!sheet || sheet.getName() !== Config.COMPANY_LIST.SHEET_NAME) {
+    SpreadsheetApp.getUi().alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートから実行してください。`);
     return;
   }
 
@@ -410,8 +410,8 @@ function callVectorizeApi() {
   }
 
   try {
-    const uuid = sheet.getRange(row, COMPANY_LIST_UUID_COL).getValue();
-    const driveUrl = sheet.getRange(row, COMPANY_LIST_DRIVE_URL_COL).getValue();
+    const uuid = sheet.getRange(row, Config.COMPANY_LIST.UUID_COL).getValue();
+    const driveUrl = sheet.getRange(row, Config.COMPANY_LIST.DRIVE_URL_COL).getValue();
 
     if (!uuid || !driveUrl) {
       throw new Error("UUIDまたはGoogleドライブのURLが空です。");
@@ -430,7 +430,7 @@ function callVectorizeApi() {
       muteHttpExceptions: true,
     };
 
-    const apiUrl = `${API_BASE_URL}/vectorize`;
+    const apiUrl = `${Config.API_BASE_URL}/vectorize`;
     const response = UrlFetchApp.fetch(apiUrl, params);
     const responseCode = response.getResponseCode();
 
@@ -450,22 +450,22 @@ function callVectorizeApi() {
  * 「会社一覧」シートで、UUIDが空の行にUUIDをまとめて生成する
  */
 function generateUuids() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(COMPANY_LIST_SHEET_NAME);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
   if (!sheet) {
-    SpreadsheetApp.getUi().alert(`'${COMPANY_LIST_SHEET_NAME}'シートが見つかりません。`);
+    SpreadsheetApp.getUi().alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
     return;
   }
 
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
-  const range = sheet.getRange(2, COMPANY_LIST_UUID_COL, lastRow - 1, COMPANY_LIST_NAME_COL);
+  const range = sheet.getRange(2, Config.COMPANY_LIST.UUID_COL, lastRow - 1, Config.COMPANY_LIST.NAME_COL);
   const values = range.getValues();
 
   let updated = false;
   for (let i = 0; i < values.length; i++) {
     const uuid = values[i][0];
-    const companyName = values[i][COMPANY_LIST_NAME_COL - 1];
+    const companyName = values[i][Config.COMPANY_LIST.NAME_COL - 1];
     if (companyName && !uuid) {
       values[i][0] = Utilities.getUuid();
       updated = true;
