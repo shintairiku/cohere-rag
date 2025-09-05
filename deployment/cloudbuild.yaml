@@ -29,7 +29,7 @@ steps:
 # --- 2. 作業員 (vectorize-job) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build Vectorize Job Image'
-  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}', '.', '-f', 'Dockerfile.job']
+  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.job']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Push Vectorize Job Image'
