@@ -14,10 +14,30 @@
 ### システム構成
 ```
 Google Sheets (UI) ←→ Cloud Run API ←→ Cohere API
-                              ↓
-                       Google Cloud Storage
-                              ↓
-                       Vector Data (JSON)
+       ↓                      ↓              ↓
+   GAS Script           Image Search    Vector Generation
+                             ↓              ↓
+                    Google Cloud Storage ←--┘
+                             ↓
+                      Vector Data (JSON)
+                             ↓
+                    Incremental Updates (Scheduler)
+```
+
+## 🏗️ プロジェクト構造
+
+新しい整理されたフォルダ構造については [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) をご確認ください。
+
+### クイックスタート
+```bash
+# APIサーバー起動
+python main.py
+
+# ベクトル化実行
+python main.py --module vectorization
+
+# スケジューラー実行  
+python main.py --module scheduler
 ```
 
 ## 📋 必要な環境・アカウント

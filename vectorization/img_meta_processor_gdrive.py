@@ -14,7 +14,7 @@ from PIL import Image
 import google.auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from drive_scanner import list_files_in_drive_folder # drive_scanner.pyを再利用
+from .drive_scanner import list_files_in_drive_folder # drive_scanner.pyを再利用
 
 load_dotenv()
 

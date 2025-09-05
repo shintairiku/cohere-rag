@@ -1,0 +1,69 @@
+# Cloud Run Job configuration for Scheduler
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: incremental-updater-scheduler
+  namespace: 'PROJECT_ID'
+  labels:
+    cloud.googleapis.com/location: asia-northeast1
+  annotations:
+    client.knative.dev/user-image: gcr.io/PROJECT_ID/incremental-updater-scheduler:latest
+    run.googleapis.com/cpu-throttling: 'false'
+    run.googleapis.com/execution-environment: gen2
+spec:
+  template:
+    spec:
+      parallelism: 1
+      completions: 1
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: Never
+          timeoutSeconds: 3600  # 1 hour timeout
+          containers:
+          - image: gcr.io/PROJECT_ID/incremental-updater-scheduler:latest
+            name: scheduler
+            resources:
+              limits:
+                cpu: '2'
+                memory: 4Gi
+              requests:
+                cpu: '1'
+                memory: 2Gi
+            env:
+            - name: ENVIRONMENT
+              value: 'production'
+            - name: GCS_BUCKET_NAME
+              value: 'your-bucket-name'
+            - name: COHERE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cohere-api-key
+                  key: key
+            - name: COMPANY_SPREADSHEET_ID
+              value: 'your-spreadsheet-id'
+            - name: MAX_WORKERS
+              value: '3'
+            # Email notification settings (optional)
+            - name: SMTP_HOST
+              value: 'smtp.gmail.com'
+            - name: SMTP_PORT
+              value: '587'
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: email-config
+                  key: user
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: email-config
+                  key: password
+            - name: NOTIFICATION_EMAIL
+              value: 'your-notification@email.com'
+            # Slack notification settings (optional)
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slack-config
+                  key: webhook-url

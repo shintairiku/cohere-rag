@@ -1,4 +1,4 @@
-# Main Dockerfile for Cohere RAG Image Search System
+# Dockerfile for Incremental Update Scheduler
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -24,8 +24,5 @@ USER app
 ENV PYTHONPATH=/app
 ENV ENVIRONMENT=production
 
-# Expose port
-EXPOSE 8000
-
-# Default command (FastAPI server)
-CMD ["python", "main.py", "--module", "api"]
+# Default command (can be overridden)
+CMD ["python", "main.py", "--module", "scheduler"]
