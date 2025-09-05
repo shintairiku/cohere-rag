@@ -5,7 +5,7 @@
  * 2. Automatic UUID generation when companies are added
  * 3. Image search triggered by cell edits in company sheets
  * 4. Management of an exclusion list for recently used images
- * * @version 1.1.0
+ * * @version 1.6.0
  * @author Claude Code Assistant (with modifications)
  */
 
@@ -139,7 +139,7 @@ function handleSheetEdit(e) {
 // =======================================================================
 
 /**
- * 画像検索を実行するメイン関数
+ * 画像検索を実行するメイン関数 (エラー修正版)
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象のシート
  * @param {number} row - 編集された行
  * @param {string} triggerValue - C列に入力されたトリガーテキスト
@@ -147,30 +147,15 @@ function handleSheetEdit(e) {
 function performSearch(sheet, row, triggerValue) {
   Logger.log(`[performSearch] Starting search for row ${row}, trigger: ${triggerValue}`);
   const statusCell = sheet.getRange(row, Config.PLATFORM.SEARCH_TRIGGER_COL);
-  
-  function safeSetCellValue(cell, value) {
-    try {
-        const validation = cell.getDataValidation();
-        if (validation) {
-            cell.clearDataValidations();
-            cell.setValue(value);
-            cell.setDataValidation(validation);
-        } else {
-            cell.setValue(value);
-        }
-    } catch (e) {
-        Logger.log(`[safeSetCellValue] Warning: Could not set cell value. ${e.message}`);
-        try {
-            cell.setValue(value);
-        } catch (e2) {
-            Logger.log(`[safeSetCellValue] Error: Fallback failed. ${e2.message}`);
-        }
-    }
-  }
-  
+  const validation = statusCell.getDataValidation();
+
   try {
+    if (validation) {
+      statusCell.clearDataValidations();
+    }
+    
     clearPreviousResults(sheet, row);
-    safeSetCellValue(statusCell, "検索中...");
+    statusCell.setValue("検索中...");
     SpreadsheetApp.flush();
 
     const companyUuid = getUuidForSheet(sheet);
@@ -181,23 +166,27 @@ function performSearch(sheet, row, triggerValue) {
       throw new Error("類似画像検索には検索クエリが必要です。");
     }
 
-    // ★変更点: 企業名を取得して除外リストを取得
     const companyName = sheet.getName().substring(Config.PLATFORM.SHEET_PREFIX.length);
     const excludeFiles = getActiveExclusionList(companyName);
     Logger.log(`[performSearch] Excluding ${excludeFiles.length} files from search for company: ${companyName}`);
 
-    // ★変更点: API呼び出しに除外リストを渡す
     const results = callSearchApi(companyUuid, query, triggerValue, excludeFiles);
     
+    writeResultsToSheet(sheet, row, results, triggerValue);
+
     if (results && results.length > 0) {
-      writeResultsToSheet(sheet, row, results, triggerValue);
-      safeSetCellValue(statusCell, "実行完了");
+      statusCell.setValue("実行完了");
     } else {
-      safeSetCellValue(statusCell, "結果なし");
+      statusCell.setValue("結果なし");
     }
   } catch (error) {
     Logger.log(`[performSearch] ERROR: ${error.toString()}\n${error.stack}`);
-    safeSetCellValue(statusCell, `エラー: ${error.message}`);
+    statusCell.setValue(`エラー: ${error.message}`);
+  } finally {
+    if (validation) {
+      statusCell.setDataValidation(validation);
+    }
+    Logger.log(`[performSearch] Finished search for row ${row}. Validation rule restored.`);
   }
 }
 
@@ -210,7 +199,7 @@ function performSearch(sheet, row, triggerValue) {
  * @return {Array<Object>|null} - 検索結果の配列
  */
 function callSearchApi(uuid, query, trigger, excludeFiles) {
-  const apiUrl = `${Config.API_BASE_URL}/search/`;
+  const apiUrl = `${Config.API_BASE_URL}/search`;
   
   const payload = {
     "uuid": uuid,
@@ -219,6 +208,9 @@ function callSearchApi(uuid, query, trigger, excludeFiles) {
     "trigger": trigger,
     "exclude_files": excludeFiles || []
   };
+
+  Logger.log(`[callSearchApi] URL: ${apiUrl}`);
+  Logger.log(`[callSearchApi] Payload: ${JSON.stringify(payload)}`);
 
   const params = {
     method: "post",
@@ -233,7 +225,6 @@ function callSearchApi(uuid, query, trigger, excludeFiles) {
   const responseText = response.getContentText();
 
   if (responseCode === 200) {
-    // APIが配列を直接返すことを想定 (main.pyの仕様に合わせる)
     return JSON.parse(responseText); 
   } else {
     Logger.log(`API Error Response (${responseCode}): ${responseText}`);
@@ -242,14 +233,35 @@ function callSearchApi(uuid, query, trigger, excludeFiles) {
 }
 
 /**
- * 以前の検索結果をクリアする
+ * 以前の検索結果をクリアする（強化版）
  */
 function clearPreviousResults(sheet, row) {
   Logger.log(`[clearPreviousResults] Clearing results for row ${row}`);
   try {
-    const range = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, 15);
-    range.clear({formatOnly: false, contentsOnly: false});
-    Logger.log(`[clearPreviousResults] Successfully cleared range`);
+    const MAX_RESULTS = 5;
+    const NUM_COLS_PER_RESULT = 3;
+    const TOTAL_RESULT_COLS = MAX_RESULTS * NUM_COLS_PER_RESULT;
+    
+    const range = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, TOTAL_RESULT_COLS);
+    
+    // まず、セル単位でデータ検証をクリア
+    for (let col = 0; col < TOTAL_RESULT_COLS; col++) {
+      const cell = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL + col);
+      try {
+        cell.clearDataValidations();
+      } catch (e) {
+        Logger.log(`[clearPreviousResults] Warning: Could not clear validation for col ${col}: ${e.message}`);
+      }
+    }
+    
+    // 次に、範囲全体をクリア
+    range.clear();
+    
+    // さらに、値を明示的に空文字列で上書き
+    const emptyRow = new Array(TOTAL_RESULT_COLS).fill("");
+    range.setValues([emptyRow]);
+    
+    Logger.log(`[clearPreviousResults] Successfully cleared ${TOTAL_RESULT_COLS} columns`);
   } catch (error) {
     Logger.log(`[clearPreviousResults] ERROR: ${error.toString()}`);
     throw error;
@@ -257,51 +269,102 @@ function clearPreviousResults(sheet, row) {
 }
 
 /**
- * APIから取得した結果をシートに書き込む
+ * APIから取得した結果をシートに書き込む (v1.7: エラー対策強化版)
  */
 function writeResultsToSheet(sheet, row, results, triggerValue) {
-  Logger.log(`[writeResultsToSheet] Starting to write ${results.length} results to row ${row}`);
+  Logger.log(`[writeResultsToSheet v1.7] Starting to write results to row ${row}`);
   
   try {
     const isRandom = (triggerValue === Config.TRIGGERS.RANDOM);
     const MAX_RESULTS = 5;
-    const rowData = [];
-    const linkInfo = [];
+    const NUM_COLS_PER_RESULT = 3;
+    const TOTAL_RESULT_COLS = MAX_RESULTS * NUM_COLS_PER_RESULT;
 
+    const rowData = [];
+    const richTextLinks = []; 
+
+    if (!results || !Array.isArray(results)) {
+        results = [];
+    }
+
+    // データ準備
     for (let i = 0; i < MAX_RESULTS; i++) {
       if (i < results.length) {
         const result = results[i];
         const fileUrl = result.filepath || "";
-        const displayText = result.filename || fileUrl.split('/').pop() || "不明なファイル";
+        const displayText = result.filename || (fileUrl ? fileUrl.split('/').pop() : "") || "不明なファイル";
         
-        rowData.push(displayText, !isRandom && result.similarity ? result.similarity.toFixed(4) : "", false);
-        linkInfo.push({ url: fileUrl, text: displayText, col: Config.PLATFORM.SEARCH_RESULT_START_COL + i * 3 });
+        rowData.push(displayText);
+        rowData.push(!isRandom && result.similarity ? result.similarity.toFixed(4) : "");
+        rowData.push(""); 
+
+        if (fileUrl) {
+          richTextLinks.push({
+            col: Config.PLATFORM.SEARCH_RESULT_START_COL + i * NUM_COLS_PER_RESULT,
+            text: displayText,
+            url: fileUrl
+          });
+        }
       } else {
         rowData.push("", "", "");
       }
     }
 
-    const targetRange = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, MAX_RESULTS * 3);
-    targetRange.setValues([rowData]);
-
-    for (let i = 0; i < MAX_RESULTS; i++) {
-      if (i < results.length) {
-        const link = linkInfo[i];
-        if (link.url) {
-          const fileNameCell = sheet.getRange(row, link.col);
-          const richText = SpreadsheetApp.newRichTextValue().setText(link.text).setLinkUrl(link.url).build();
-          fileNameCell.setRichTextValue(richText);
+    // セル単位で安全に値を設定
+    for (let i = 0; i < TOTAL_RESULT_COLS; i++) {
+      const cell = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL + i);
+      try {
+        // データ検証をクリアしてから値を設定
+        cell.clearDataValidations();
+        cell.setValue(rowData[i]);
+      } catch (e) {
+        Logger.log(`[writeResultsToSheet v1.7] Warning: Could not set value for col ${i}: ${e.message}`);
+        // フォールバック：空文字列を設定
+        try {
+          cell.setValue("");
+        } catch (e2) {
+          Logger.log(`[writeResultsToSheet v1.7] Error: Even empty string failed for col ${i}: ${e2.message}`);
         }
-        const checkboxCell = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL + (i * 3) + 2);
-        checkboxCell.insertCheckboxes();
       }
     }
-    Logger.log(`[writeResultsToSheet] Successfully completed writing results`);
+    
+    Logger.log("[writeResultsToSheet v1.7] Individual cell write complete.");
+
+    // ★★★★★ 重要: ここでflushを呼び出し、シートの更新を確定させる ★★★★★
+    SpreadsheetApp.flush();
+    Logger.log("[writeResultsToSheet v1.7] Flushed sheet updates.");
+
+    // flush後に書式設定を適用する
+    for (const link of richTextLinks) {
+      try {
+        const cell = sheet.getRange(row, link.col);
+        const richText = SpreadsheetApp.newRichTextValue().setText(link.text).setLinkUrl(link.url).build();
+        cell.setRichTextValue(richText);
+      } catch (e) {
+        Logger.log(`[writeResultsToSheet v1.7] Warning: Could not set rich text for ${link.text}: ${e.message}`);
+      }
+    }
+    
+    for (let i = 0; i < results.length; i++) {
+        if (i < MAX_RESULTS) {
+            try {
+                const checkCol = Config.PLATFORM.SEARCH_RESULT_START_COL + (i * NUM_COLS_PER_RESULT) + 2;
+                const checkCell = sheet.getRange(row, checkCol);
+                checkCell.clearDataValidations(); // チェックボックス用セルもクリア
+                checkCell.insertCheckboxes();
+            } catch (e) {
+                Logger.log(`[writeResultsToSheet v1.7] Warning: Could not insert checkbox for result ${i}: ${e.message}`);
+            }
+        }
+    }
+    Logger.log(`[writeResultsToSheet v1.7] Applied formats and checkboxes successfully.`);
+    
   } catch (error) {
-    Logger.log(`[writeResultsToSheet] ERROR: ${error.toString()}`);
+    Logger.log(`[writeResultsToSheet v1.7] ERROR: ${error.toString()}\n${error.stack}`);
     throw error;
   }
 }
+
 
 // =======================================================================
 // 除外リスト管理の関数 (新規追加セクション)
@@ -316,7 +379,6 @@ function addFileToExclusionList(companyName, fileName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(Config.EXCLUSION.SHEET_NAME);
 
-  // 除外リストシートが存在しない場合は作成
   if (!sheet) {
     sheet = ss.insertSheet(Config.EXCLUSION.SHEET_NAME, 0);
     const headers = [["企業名", "除外ファイルリスト", "最終更新日", "編集"]];
@@ -325,24 +387,20 @@ function addFileToExclusionList(companyName, fileName) {
     sheet.setColumnWidth(Config.EXCLUSION.EXCLUSIONS_COL, 600);
     sheet.setColumnWidth(Config.EXCLUSION.LAST_UPDATED_COL, 150);
     sheet.setColumnWidth(Config.EXCLUSION.EDIT_BUTTON_COL, 80);
-    
-    // ヘッダー行を固定
     sheet.setFrozenRows(1);
   }
 
-  // 企業の行を検索
   const lastRow = sheet.getLastRow();
   let companyRow = -1;
   
   if (lastRow > 1) {
     const companyNames = sheet.getRange(2, Config.EXCLUSION.COMPANY_NAME_COL, lastRow - 1, 1).getValues().flat();
-    companyRow = companyNames.indexOf(companyName) + 2; // +2 because array is 0-indexed and starts from row 2
+    companyRow = companyNames.indexOf(companyName) + 2;
   }
 
   const now = new Date();
   
   if (companyRow > 1) {
-    // 既存の企業行を更新
     const exclusionsCell = sheet.getRange(companyRow, Config.EXCLUSION.EXCLUSIONS_COL);
     const currentExclusionsJson = exclusionsCell.getValue();
     
@@ -350,7 +408,6 @@ function addFileToExclusionList(companyName, fileName) {
     if (currentExclusionsJson) {
       try {
         const parsedData = JSON.parse(currentExclusionsJson);
-        // 配列形式と新しいオブジェクト形式の両方に対応
         if (Array.isArray(parsedData)) {
           exclusions = parsedData.map(f => ({filename: f, date: now.toISOString()}));
         } else if (parsedData.files) {
@@ -361,24 +418,20 @@ function addFileToExclusionList(companyName, fileName) {
       }
     }
     
-    // 既に存在するかチェック
     if (exclusions.some(f => f.filename === fileName)) {
       SpreadsheetApp.getActiveSpreadsheet().toast(`「${fileName}」は既に${companyName}の除外リストに存在します。`);
       return;
     }
     
-    // 新しいファイルを追加
     exclusions.push({
       filename: fileName,
       date: now.toISOString()
     });
     
-    // JSON形式で保存
     exclusionsCell.setValue(JSON.stringify({files: exclusions}));
     sheet.getRange(companyRow, Config.EXCLUSION.LAST_UPDATED_COL).setValue(now);
     
   } else {
-    // 新しい企業行を追加
     const newExclusions = {
       files: [{
         filename: fileName,
@@ -408,7 +461,6 @@ function getActiveExclusionList(companyName) {
     return [];
   }
 
-  // 企業の行を検索
   const lastRow = sheet.getLastRow();
   const companyNames = sheet.getRange(2, Config.EXCLUSION.COMPANY_NAME_COL, lastRow - 1, 1).getValues().flat();
   const companyRow = companyNames.indexOf(companyName) + 2;
@@ -418,7 +470,6 @@ function getActiveExclusionList(companyName) {
     return [];
   }
 
-  // 除外リストのJSONを取得
   const exclusionsJson = sheet.getRange(companyRow, Config.EXCLUSION.EXCLUSIONS_COL).getValue();
   
   if (!exclusionsJson) {
@@ -432,18 +483,16 @@ function getActiveExclusionList(companyName) {
 
     let activeExclusions = [];
     
-    // 新しいオブジェクト形式の処理
     if (parsedData.files && Array.isArray(parsedData.files)) {
       activeExclusions = parsedData.files
         .filter(f => {
-          if (!f.date) return true; // 日付がない場合は有効とみなす
+          if (!f.date) return true;
           return new Date(f.date) >= thresholdDate;
         })
         .map(f => f.filename);
     }
-    // 後方互換性のため配列形式もサポート
     else if (Array.isArray(parsedData)) {
-      activeExclusions = parsedData; // 古い形式は全て有効とみなす
+      activeExclusions = parsedData;
     }
 
     Logger.log(`Found ${activeExclusions.length} active exclusions for company: ${companyName}`);
@@ -484,7 +533,6 @@ function openExclusionListEditor(companyName, row) {
     Logger.log(`Error parsing exclusions: ${e.message}`);
   }
   
-  // 除外リストを表示用に整形
   let message = `企業: ${companyName}\n\n現在の除外ファイル:\n`;
   
   if (exclusions.length === 0) {
@@ -508,15 +556,12 @@ function openExclusionListEditor(companyName, row) {
     }
     
     if (input.toLowerCase() === 'all') {
-      // 全て削除
       exclusions = [];
       ui.alert('完了', `${companyName}の除外リストを全てクリアしました。`, ui.ButtonSet.OK);
     } else {
-      // 指定された番号のファイルを削除
       const indices = input.split(',').map(s => parseInt(s.trim()) - 1).filter(i => !isNaN(i) && i >= 0 && i < exclusions.length);
       
       if (indices.length > 0) {
-        // インデックスを降順でソートして後ろから削除
         indices.sort((a, b) => b - a);
         const removedFiles = [];
         
@@ -529,7 +574,6 @@ function openExclusionListEditor(companyName, row) {
       }
     }
     
-    // 更新されたリストを保存
     const updatedJson = JSON.stringify({files: exclusions});
     sheet.getRange(row, Config.EXCLUSION.EXCLUSIONS_COL).setValue(updatedJson);
     sheet.getRange(row, Config.EXCLUSION.LAST_UPDATED_COL).setValue(new Date());
@@ -548,8 +592,8 @@ function getUuidForSheet(sheet) {
   const companyListSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
   if (!companyListSheet) return null;
 
-  const data = companyListSheet.getRange(2, Config.COMPANY_LIST.NAME_COL, companyListSheet.getLastRow() - 1, 1).getValues();
-  const uuids = companyListSheet.getRange(2, Config.COMPANY_LIST.UUID_COL, companyListSheet.getLastRow() - 1, 1).getValues();
+  const data = companyListSheet.getRange(2, Config.COMPANY_LIST.NAME_COL, companyListSheet.getLastRow(), 1).getValues();
+  const uuids = companyListSheet.getRange(2, Config.COMPANY_LIST.UUID_COL, companyListSheet.getLastRow(), 1).getValues();
 
   for (let i = 0; i < data.length; i++) {
     if (data[i][0] === companyName) {
@@ -591,7 +635,7 @@ function callVectorizeApi() {
       muteHttpExceptions: true,
     };
 
-    const apiUrl = `${Config.API_BASE_URL}/vectorize/`;
+    const apiUrl = `${Config.API_BASE_URL}/vectorize`;
     const response = UrlFetchApp.fetch(apiUrl, params);
     const responseCode = response.getResponseCode();
 
