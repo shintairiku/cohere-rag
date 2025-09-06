@@ -54,26 +54,34 @@ steps:
     - '--max-retries=1'
 
 # --- 3. スケジューラー (scheduler-job) のビルド＆デプロイ ---
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Build Scheduler Job Image'
-  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.scheduler']
-
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Push Scheduler Job Image'
-  args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}']
-
-- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-  id: 'Deploy Scheduler Job'
-  entrypoint: bash
-  args:
-    - -c
-    - |
-      # Replace placeholders with actual values
-      sed 's|SCHEDULER_IMAGE_PLACEHOLDER|${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}|g; s|COHERE_API_KEY_PLACEHOLDER|${_COHERE_API_KEY}|g' deployment/scheduler-job.yaml > /tmp/scheduler-job.yaml
-      gcloud run jobs replace /tmp/scheduler-job.yaml --region=${_DEPLOY_REGION}
+# Temporarily commented out to fix main deployment first
+#- name: 'gcr.io/cloud-builders/docker'
+#  id: 'Build Scheduler Job Image'
+#  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.scheduler']
+#
+#- name: 'gcr.io/cloud-builders/docker'
+#  id: 'Push Scheduler Job Image'
+#  args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}']
+#
+#- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+#  id: 'Deploy Scheduler Job'
+#  entrypoint: bash
+#  args:
+#    - -c
+#    - |
+#      # Replace placeholders with actual values
+#      echo "=== Original scheduler-job.yaml ==="
+#      cat deployment/scheduler-job.yaml
+#      echo "=== Applying substitutions ==="
+#      sed 's|SCHEDULER_IMAGE_PLACEHOLDER|${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}|g; s|COHERE_API_KEY_PLACEHOLDER|${_COHERE_API_KEY}|g' deployment/scheduler-job.yaml > /tmp/scheduler-job.yaml
+#      echo "=== Final scheduler-job.yaml ==="
+#      cat /tmp/scheduler-job.yaml
+#      echo "=== Deploying Cloud Run Job ==="
+#      gcloud run jobs replace /tmp/scheduler-job.yaml --region=${_DEPLOY_REGION}
 
 images:
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
-- '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}'
+# Scheduler image temporarily commented out
+#- '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}'
 

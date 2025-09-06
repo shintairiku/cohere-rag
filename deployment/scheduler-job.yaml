@@ -3,31 +3,13 @@ apiVersion: run.googleapis.com/v1
 kind: Job
 metadata:
   name: scheduler-job
-  labels:
-    cloud.googleapis.com/location: asia-northeast1
-  annotations:
-    run.googleapis.com/cpu-throttling: 'false'
-    run.googleapis.com/execution-environment: gen2
 spec:
   template:
-    metadata:
-      annotations:
-        run.googleapis.com/execution-environment: gen2
     spec:
-      parallelism: 1
-      taskCount: 1
       template:
         spec:
-          maxRetries: 3
-          timeout: 3600s
-          serviceAccountName: marketing-automation@marketing-automation-461305.iam.gserviceaccount.com
           containers:
           - image: SCHEDULER_IMAGE_PLACEHOLDER
-            name: scheduler
-            resources:
-              limits:
-                cpu: '2'
-                memory: 4Gi
             env:
             - name: ENVIRONMENT
               value: 'production'
@@ -35,5 +17,3 @@ spec:
               value: 'embedding_storage'
             - name: COHERE_API_KEY
               value: 'COHERE_API_KEY_PLACEHOLDER'
-            - name: MAX_WORKERS
-              value: '3'
