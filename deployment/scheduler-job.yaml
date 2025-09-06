@@ -1,19 +1,40 @@
-# Cloud Run Job configuration for Scheduler
 apiVersion: run.googleapis.com/v1
 kind: Job
 metadata:
   name: scheduler-job
+  labels:
+    cloud.googleapis.com/location: asia-northeast1
+  annotations:
+    run.googleapis.com/execution-environment: gen2
 spec:
   template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
     spec:
+      parallelism: 1
+      taskCount: 1
       template:
+        metadata:
+          annotations:
+            run.googleapis.com/execution-environment: gen2
         spec:
+          maxRetries: 3
+          taskTimeout: 3600s
+          serviceAccountName: marketing-automation@marketing-automation-461305.iam.gserviceaccount.com
           containers:
-          - image: SCHEDULER_IMAGE_PLACEHOLDER
+          - name: scheduler
+            image: SCHEDULER_IMAGE_PLACEHOLDER
+            resources:
+              limits:
+                cpu: "2"
+                memory: "4Gi"
             env:
             - name: ENVIRONMENT
-              value: 'production'
+              value: "production"
             - name: GCS_BUCKET_NAME
-              value: 'embedding_storage'
+              value: "embedding_storage"
             - name: COHERE_API_KEY
-              value: 'COHERE_API_KEY_PLACEHOLDER'
+              value: "COHERE_API_KEY_PLACEHOLDER"
+            - name: MAX_WORKERS
+              value: "3"
