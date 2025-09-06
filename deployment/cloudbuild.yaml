@@ -51,7 +51,27 @@ steps:
     - '--parallelism=1'
     - '--max-retries=1'
 
+# --- 3. スケジューラー (scheduler-job) のビルド＆デプロイ ---
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build Scheduler Job Image'
+  args: ['build', '-t', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.scheduler']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Scheduler Job Image'
+  args: ['push', '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}']
+
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Deploy Scheduler Job'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'jobs'
+    - 'replace'
+    - 'deployment/scheduler-job.yaml'
+    - '--region=${_DEPLOY_REGION}'
+
 images:
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_JOB_NAME_VECTORIZE}:${COMMIT_SHA}'
+- '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/scheduler-job:${COMMIT_SHA}'
 
