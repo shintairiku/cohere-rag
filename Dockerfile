@@ -24,8 +24,8 @@ USER app
 ENV PYTHONPATH=/app
 ENV ENVIRONMENT=production
 
-# Expose port
-EXPOSE 8000
+# Expose port (Cloud Run uses PORT environment variable, defaults to 8080)
+EXPOSE 8080
 
 # Default command (FastAPI server)
 CMD ["python", "main.py", "--module", "api"]

@@ -23,7 +23,7 @@ def start_api_server():
     import uvicorn
     from api.main import app
     
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8080))
     host = os.environ.get("HOST", "0.0.0.0")
     
     print(f"🚀 Starting Cohere RAG API server on {host}:{port}")
