@@ -113,7 +113,8 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
         # 1. ファイル名をtextとしてベクトル化
         text_response = co_client.embed(
             texts=[filename],
-            model="embed-multilingual-v3.0",
+            # model="embed-multilingual-v3.0",
+            model="embed-v4.0",
             input_type="search_document"
         )
         text_vec = np.array(text_response.embeddings[0])
@@ -136,7 +137,8 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
         
         image_response = co_client.embed(
             images=[data_uri],
-            model="embed-multilingual-v3.0",
+            # model="embed-multilingual-v3.0",
+            model="embed-v4.0",
             input_type="image"
         )
         image_vec = np.array(image_response.embeddings[0])
