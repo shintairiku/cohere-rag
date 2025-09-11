@@ -1,0 +1,42 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: scheduler-job-dev
+  labels:
+    cloud.googleapis.com/location: asia-northeast1
+  annotations:
+    run.googleapis.com/execution-environment: gen2
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        metadata:
+          annotations:
+            run.googleapis.com/execution-environment: gen2
+        spec:
+          maxRetries: 3
+          taskTimeout: 3600s
+          serviceAccountName: marketing-automation@marketing-automation-461305.iam.gserviceaccount.com
+          containers:
+          - name: scheduler-dev
+            image: SCHEDULER_IMAGE_PLACEHOLDER
+            resources:
+              limits:
+                cpu: "2"
+                memory: "4Gi"
+            env:
+            - name: ENVIRONMENT
+              value: "development"
+            - name: GCS_BUCKET_NAME
+              value: "embedding_storage_dev"
+            - name: COHERE_API_KEY
+              value: "COHERE_API_KEY_PLACEHOLDER"
+            - name: MAX_WORKERS
+              value: "3"
+            - name: VECTORIZE_JOB_NAME
+              value: "cohere-rag-vectorize-job-dev"

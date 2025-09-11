@@ -1,0 +1,37 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: cohere-rag-dev
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containers:
+      - image: asia-northeast1-docker.pkg.dev/marketing-automation-461305/cloud-run-source-deploy/cohere-rag-dev:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GCP_PROJECT_ID
+          value: marketing-automation-461305
+        - name: GCS_BUCKET_NAME
+          value: embedding_storage_dev
+        - name: COHERE_API_KEY
+          value: 6T3N7PvvKj0J3xAj6WbXvSKQAms4VlEQ3oAFXFIL
+        - name: VECTORIZE_JOB_NAME
+          value: cohere-rag-vectorize-job-dev
+        - name: SCHEDULER_JOB_NAME
+          value: scheduler-job-dev
+        - name: GCP_REGION
+          value: asia-northeast1
+        - name: ENVIRONMENT
+          value: development
+        resources:
+          limits:
+            cpu: "2"
+            memory: 2Gi
+      serviceAccountName: marketing-automation@marketing-automation-461305.iam.gserviceaccount.com
+      timeoutSeconds: 300

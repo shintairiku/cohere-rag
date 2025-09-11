@@ -1,0 +1,84 @@
+# Cloud Run サービス (main-dev) と Cloud Run ジョブ (vectorize-job-dev, scheduler-job-dev) をデプロイする構成
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+# --- 1. 司令塔 (main-service-dev) のビルド＆デプロイ ---
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build Main Service Image Dev'
+  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-dev:${COMMIT_SHA}', '.', '-f', 'Dockerfile']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Main Service Image Dev'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-dev:${COMMIT_SHA}']
+
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Deploy Main Service Dev'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'cohere-rag-dev'
+    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-dev:${COMMIT_SHA}'
+    - '--region=asia-northeast1'
+    - '--platform=managed'
+    - '--allow-unauthenticated'
+    - '--service-account=marketing-automation@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=embedding_storage_dev,COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=cohere-rag-vectorize-job-dev,GCP_REGION=asia-northeast1'
+    - '--port=8080'
+    - '--timeout=300'
+
+# --- 2. 作業員 (vectorize-job-dev) のビルド＆デプロイ ---
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build Vectorize Job Image Dev'
+  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-vectorize-job-dev:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.job.dev']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Vectorize Job Image Dev'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-vectorize-job-dev:${COMMIT_SHA}']
+
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Deploy Vectorize Job Dev'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'jobs'
+    - 'update'
+    - 'cohere-rag-vectorize-job-dev'
+    - '--image=asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-vectorize-job-dev:${COMMIT_SHA}'
+    - '--region=asia-northeast1'
+    - '--service-account=marketing-automation@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--set-env-vars=GCS_BUCKET_NAME=embedding_storage_dev,COHERE_API_KEY=${_COHERE_API_KEY}'
+    - '--task-timeout=36000'
+    - '--parallelism=1'
+    - '--max-retries=1'
+
+# --- 3. スケジューラー (scheduler-job-dev) のビルド＆デプロイ ---
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build Scheduler Job Image Dev'
+  args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/scheduler-job-dev:${COMMIT_SHA}', '.', '-f', 'docker/Dockerfile.scheduler.dev']
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Scheduler Job Image Dev'
+  args: ['push', 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/scheduler-job-dev:${COMMIT_SHA}']
+
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Deploy Scheduler Job Dev'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      echo "=== Replacing placeholders in scheduler-job-dev.yaml ==="
+      sed 's|SCHEDULER_IMAGE_PLACEHOLDER|asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/scheduler-job-dev:${COMMIT_SHA}|g; s|COHERE_API_KEY_PLACEHOLDER|${_COHERE_API_KEY}|g' deployment/scheduler-job-dev.yaml > /tmp/scheduler-job-dev.yaml
+      echo "=== Validating YAML structure ==="
+      cat /tmp/scheduler-job-dev.yaml
+      echo "=== Deploying Cloud Run Job ==="
+      gcloud run jobs replace /tmp/scheduler-job-dev.yaml --region=asia-northeast1 --verbosity=debug
+
+images:
+- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-dev:${COMMIT_SHA}'
+- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/cohere-rag-vectorize-job-dev:${COMMIT_SHA}'
+- 'asia-northeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/scheduler-job-dev:${COMMIT_SHA}'
+
+substitutions:
+  _COHERE_API_KEY: 'YOUR_COHERE_API_KEY'
