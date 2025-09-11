@@ -15,12 +15,14 @@ COPY requirements.txt .
 # Install the dependencies.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire application code
-COPY . .
+# Copy the job script and its dependencies into the container.
+COPY vectorization/img_meta_processor_gdrive.py .
+COPY vectorization/drive_scanner.py .
+COPY config/ ./config/
 
 # Set environment variables
 ENV PYTHONPATH=/app
 
 # Set the entrypoint for the container to run the job script.
-CMD ["python", "main.py", "--module", "vectorization"]
+CMD ["python", "img_meta_processor_gdrive.py"]
 
