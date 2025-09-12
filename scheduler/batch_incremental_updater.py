@@ -27,7 +27,7 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 from dotenv import load_dotenv
 from google.cloud import storage
@@ -45,6 +45,9 @@ class CompanyInfo:
     uuid: str
     name: str
     drive_url: str
+    sheet_url: str = field(default="")       # Column D: Sheet URL
+    sheet_name: str = field(default="")      # Column E: Sheet Name  
+    auto_update: bool = field(default=False)  # Column F: AutoUpdate (yes/no)
     
 @dataclass
 class BatchUpdateResults:
@@ -75,12 +78,13 @@ class BatchIncrementalUpdater:
         self.max_workers = max_workers
         self.updater = IncrementalEmbeddingUpdater(bucket_name)
         
-    def get_companies_from_sheets(self, spreadsheet_id: str) -> List[CompanyInfo]:
+    def get_companies_from_sheets(self, spreadsheet_id: str, auto_only: bool = False) -> List[CompanyInfo]:
         """
         Get company information from Google Sheets.
         
         Args:
             spreadsheet_id: Google Sheets spreadsheet ID
+            auto_only: If True, return only companies with AutoUpdate enabled (column F)
             
         Returns:
             List of CompanyInfo objects
@@ -102,8 +106,8 @@ class BatchIncrementalUpdater:
             # Build Sheets service
             sheets_service = build('sheets', 'v4', credentials=creds)
             
-            # Read company data from "会社一覧" sheet
-            range_name = "会社一覧!A:C"  # UUID, Name, Drive URL
+            # Read company data from "会社一覧" sheet  
+            range_name = "会社一覧!A:F"  # UUID, Name, Drive URL, Sheet URL, Sheet Name, AutoUpdate
             result = sheets_service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id, range=range_name
             ).execute()
@@ -113,14 +117,37 @@ class BatchIncrementalUpdater:
             
             # Skip header row and process data
             for i, row in enumerate(values[1:], 2):  # Start from row 2
-                if len(row) >= 3 and row[0] and row[1] and row[2]:  # UUID, Name, Drive URL
+                # Safe indexing for variable row lengths
+                uuid = row[0].strip() if len(row) >= 1 and row[0] else ""
+                name = row[1].strip() if len(row) >= 2 and row[1] else ""
+                drive_url = row[2].strip() if len(row) >= 3 and row[2] else ""
+                sheet_url = row[3].strip() if len(row) >= 4 and row[3] else ""
+                sheet_name = row[4].strip() if len(row) >= 5 and row[4] else ""
+                auto_flag_raw = row[5].strip() if len(row) >= 6 and row[5] else ""
+                
+                # Parse AutoUpdate flag (column F): yes/no format
+                auto_update = str(auto_flag_raw).lower() in ("yes", "y", "1", "true", "on", "enable", "enabled")
+                
+                if uuid and name and drive_url:  # All required fields present
                     company = CompanyInfo(
-                        uuid=row[0].strip(),
-                        name=row[1].strip(),
-                        drive_url=row[2].strip()
+                        uuid=uuid,
+                        name=name,
+                        drive_url=drive_url,
+                        sheet_url=sheet_url,
+                        sheet_name=sheet_name,
+                        auto_update=auto_update
                     )
-                    companies.append(company)
-                    print(f"  📋 Found company: {company.name} ({company.uuid})")
+                    
+                    # Filter by auto_only flag if requested
+                    if auto_only:
+                        if company.auto_update:
+                            companies.append(company)
+                            print(f"  📋 Found auto-update company: {company.name} ({company.uuid}) - Sheet: {company.sheet_name}")
+                    else:
+                        companies.append(company)
+                        auto_status = "🔄 AUTO" if company.auto_update else "📝 MANUAL"
+                        sheet_info = f"Sheet: {company.sheet_name}" if company.sheet_name else "No sheet"
+                        print(f"  📋 Found company: {company.name} ({company.uuid}) - {auto_status} - {sheet_info}")
                 elif len(row) > 0 and any(row):  # Non-empty row but missing data
                     print(f"  ⚠️  Row {i}: Incomplete data - {row}")
             

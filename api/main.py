@@ -89,6 +89,12 @@ class SchedulerRequest(BaseModel):
     dry_run: bool = False
 
 
+class ManifestCheckRequest(BaseModel):
+    """Request model for manifest diff checking."""
+    uuid: str
+    drive_url: str
+
+
 class JobService:
     """Service for managing Cloud Run Jobs."""
     
@@ -475,7 +481,103 @@ def health_check():
         return {"status": "unhealthy", "error": str(e)}
 
 
+@app.get("/manifest-status")
+def get_manifest_status():
+    """Get manifest status for all companies with AutoUpdate enabled."""
+    try:
+        from scheduler.batch_incremental_updater import BatchIncrementalUpdater
+        from scheduler.manifest_store import get_manifest_info, list_all_manifests
+        
+        updater = BatchIncrementalUpdater(config.gcs_bucket_name)
+        
+        # Get companies with AutoUpdate enabled
+        auto_companies = []
+        spreadsheet_id = os.getenv("COMPANY_SPREADSHEET_ID")
+        if spreadsheet_id:
+            auto_companies = updater.get_companies_from_sheets(spreadsheet_id, auto_only=True)
+        
+        # Get manifest info for each company
+        manifest_statuses = []
+        for company in auto_companies:
+            manifest_info = get_manifest_info(config.gcs_bucket_name, company.uuid)
+            manifest_statuses.append({
+                "uuid": company.uuid,
+                "name": company.name,
+                "drive_url": company.drive_url,
+                "sheet_url": company.sheet_url,
+                "sheet_name": company.sheet_name,
+                "auto_update": company.auto_update,
+                "manifest_info": manifest_info
+            })
+        
+        # Also show companies with manifests but no AutoUpdate flag
+        all_manifest_uuids = list_all_manifests(config.gcs_bucket_name)
+        auto_uuids = {c.uuid for c in auto_companies}
+        orphaned_manifests = []
+        
+        for uuid in all_manifest_uuids:
+            if uuid not in auto_uuids:
+                manifest_info = get_manifest_info(config.gcs_bucket_name, uuid)
+                orphaned_manifests.append({
+                    "uuid": uuid,
+                    "manifest_info": manifest_info,
+                    "status": "orphaned (no AutoUpdate or company deleted)"
+                })
+        
+        return {
+            "auto_update_companies": len(auto_companies),
+            "companies_with_manifests": len(all_manifest_uuids),
+            "manifest_statuses": manifest_statuses,
+            "orphaned_manifests": orphaned_manifests
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting manifest status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/check-manifest-diff")
+async def check_manifest_diff(request: ManifestCheckRequest):
+    """Check if a specific company needs updates based on manifest comparison."""
+    try:
+        from scheduler.manifest_store import needs_update_from_manifest, get_manifest_info
+        from vectorization.drive_scanner import list_files_in_drive_folder
+        
+        print(f"🔍 Checking manifest diff for UUID: {request.uuid}")
+        
+        # Get current Drive files
+        drive_files = list_files_in_drive_folder(request.drive_url)
+        
+        # Check if update is needed
+        needs_update = needs_update_from_manifest(config.gcs_bucket_name, request.uuid, drive_files)
+        
+        # Get current manifest info
+        manifest_info = get_manifest_info(config.gcs_bucket_name, request.uuid)
+        
+        return {
+            "message": f"Manifest diff check completed for {request.uuid}",
+            "uuid": request.uuid,
+            "needs_update": needs_update,
+            "current_drive_files": len(drive_files),
+            "manifest_info": manifest_info,
+            "drive_files_sample": [
+                {
+                    "id": f.get("id"), 
+                    "name": f.get("name"),
+                    "modifiedTime": f.get("modifiedTime"),
+                    "size": f.get("size")
+                }
+                for f in drive_files[:5]  # Show first 5 files
+            ]
+        }
+        
+    except Exception as e:
+        print(f"❌ Manifest diff check failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 def root():
     """Root endpoint."""
-    return {"status": "ok", "service": "image-search-api", "version": "1.1.0"}
+    return {"status": "ok", "service": "image-search-api", "version": "1.2.0"}

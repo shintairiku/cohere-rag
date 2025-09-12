@@ -101,12 +101,18 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
             
             results = drive_service.files().list(
                 q=query,
-                fields="files(id, name, webViewLink, mimeType)",
+                fields="files(id, name, webViewLink, mimeType, modifiedTime, size, md5Checksum)",
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True
             ).execute()
             for image in results.get('files', []):
                 image['folder_path'] = folder['path']
+                # Normalize size field - Drive returns size as string; convert to int if present
+                if 'size' in image and image['size']:
+                    try:
+                        image['size'] = int(image['size'])
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if conversion fails
                 all_images.append(image)
                 
         except Exception as e:

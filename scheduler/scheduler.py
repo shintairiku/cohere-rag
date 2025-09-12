@@ -32,6 +32,8 @@ from dotenv import load_dotenv
 from google.cloud import secretmanager
 
 from .batch_incremental_updater import BatchIncrementalUpdater, BatchUpdateResults
+from .manifest_store import needs_update_from_manifest, update_manifest_after_run
+from vectorization.drive_scanner import list_files_in_drive_folder
 
 load_dotenv()
 
@@ -175,29 +177,108 @@ class ScheduledUpdater:
             raise ValueError("GCS_BUCKET_NAME environment variable is required")
     
     def run_scheduled_update(self) -> BatchUpdateResults:
-        """Run a scheduled incremental update."""
-        logger.info("Starting scheduled incremental update")
+        """Run a scheduled incremental update with differential detection."""
+        logger.info("Starting scheduled incremental update with differential detection")
         
         try:
             # Initialize updater
             updater = BatchIncrementalUpdater(self.bucket_name, max_workers=self.max_workers)
             
-            # Get companies list
-            companies = []
+            # Get companies with AutoUpdate enabled only
+            all_auto_companies = []
             if self.spreadsheet_id:
-                logger.info(f"Loading companies from spreadsheet: {self.spreadsheet_id}")
-                companies = updater.get_companies_from_sheets(self.spreadsheet_id)
+                logger.info(f"Loading auto-update companies from spreadsheet: {self.spreadsheet_id}")
+                all_auto_companies = updater.get_companies_from_sheets(self.spreadsheet_id, auto_only=True)
             else:
-                logger.warning("No spreadsheet ID configured, looking for companies.json")
+                logger.warning("No spreadsheet ID configured for automatic updates")
+                # For companies.json, get all companies (no auto_only filtering available)
                 companies_file = "companies.json"
                 if os.path.exists(companies_file):
-                    companies = updater.get_companies_from_file(companies_file)
+                    all_auto_companies = updater.get_companies_from_file(companies_file)
             
-            if not companies:
-                raise ValueError("No companies found to process")
+            if not all_auto_companies:
+                logger.info("No companies with AutoUpdate enabled found. Nothing to process.")
+                # Return empty results for consistency
+                from datetime import datetime
+                return BatchUpdateResults(
+                    total_companies=0,
+                    successful_updates=0, 
+                    failed_updates=0,
+                    total_files_added=0,
+                    total_files_updated=0,
+                    total_files_removed=0,
+                    total_errors=0,
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                    duration_seconds=0,
+                    company_results=[]
+                )
             
-            # Run batch update
-            results = updater.run_batch_update(companies)
+            # Check each company for changes using manifest comparison
+            companies_needing_update = []
+            logger.info(f"Checking {len(all_auto_companies)} companies for changes...")
+            
+            for company in all_auto_companies:
+                try:
+                    logger.info(f"Checking for changes: {company.name} ({company.uuid})")
+                    
+                    # Get current Drive file metadata (lightweight operation)
+                    drive_files = list_files_in_drive_folder(company.drive_url)
+                    
+                    # Compare with stored manifest
+                    if needs_update_from_manifest(self.bucket_name, company.uuid, drive_files):
+                        companies_needing_update.append(company)
+                        logger.info(f"✅ Changes detected for {company.name} - added to update queue")
+                    else:
+                        logger.info(f"⏸️  No changes detected for {company.name} - skipping")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error checking {company.name} ({company.uuid}): {e}")
+                    # On error, include company in update queue to be safe
+                    companies_needing_update.append(company)
+                    logger.info(f"⚠️  Added {company.name} to update queue due to check error")
+            
+            if not companies_needing_update:
+                logger.info("🎉 No companies require updates. All systems up to date!")
+                from datetime import datetime
+                return BatchUpdateResults(
+                    total_companies=len(all_auto_companies),
+                    successful_updates=0,
+                    failed_updates=0, 
+                    total_files_added=0,
+                    total_files_updated=0,
+                    total_files_removed=0,
+                    total_errors=0,
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                    duration_seconds=0,
+                    company_results=[]
+                )
+            
+            logger.info(f"🚀 Processing {len(companies_needing_update)} companies with detected changes...")
+            
+            # Run batch update only for companies with changes
+            results = updater.run_batch_update(companies_needing_update)
+            
+            # Update manifests for successfully processed companies
+            logger.info("Updating manifests after successful processing...")
+            for company in companies_needing_update:
+                # Find corresponding result
+                company_result = next(
+                    (r for r in results.company_results if r['uuid'] == company.uuid), 
+                    None
+                )
+                
+                if company_result and company_result['success']:
+                    try:
+                        # Re-fetch Drive files and update manifest
+                        drive_files = list_files_in_drive_folder(company.drive_url)
+                        update_manifest_after_run(self.bucket_name, company.uuid, drive_files)
+                        logger.info(f"📄 Updated manifest for {company.name}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update manifest for {company.name}: {e}")
+                else:
+                    logger.warning(f"⚠️  Skipping manifest update for {company.name} due to processing failure")
             
             # Save results
             updater.save_results_to_storage(results)
@@ -205,7 +286,7 @@ class ScheduledUpdater:
             # Send notifications
             self.notification_manager.notify_batch_results(results)
             
-            logger.info("Scheduled update completed successfully")
+            logger.info(f"✅ Scheduled update completed: {results.successful_updates}/{results.total_companies} companies")
             return results
             
         except Exception as e:
