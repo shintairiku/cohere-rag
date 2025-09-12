@@ -83,6 +83,12 @@ class BatchIncrementalUpdateRequest(BaseModel):
     max_workers: int = 3
 
 
+class SchedulerRequest(BaseModel):
+    """Request model for manual scheduler execution."""
+    mode: str = "update"  # "update" or "health"
+    dry_run: bool = False
+
+
 class JobService:
     """Service for managing Cloud Run Jobs."""
     
@@ -392,6 +398,68 @@ async def trigger_batch_incremental_update(request: BatchIncrementalUpdateReques
         raise
     except Exception as e:
         print(f"❌ Batch incremental update failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/trigger-scheduler", status_code=202)
+async def trigger_scheduler(request: SchedulerRequest):
+    """Manually trigger scheduler execution for debugging."""
+    try:
+        from scheduler.scheduler import ScheduledUpdater
+        
+        print(f"🎯 Manual scheduler trigger - Mode: {request.mode}, Dry run: {request.dry_run}")
+        
+        scheduler = ScheduledUpdater()
+        
+        if request.mode == "health":
+            health = scheduler.health_check()
+            return {
+                "message": "Scheduler health check completed",
+                "mode": request.mode,
+                "health_status": health
+            }
+        elif request.mode == "update":
+            if request.dry_run:
+                print("🧪 DRY RUN MODE - no actual updates will be performed")
+                health = scheduler.health_check()
+                if health["status"] == "healthy":
+                    return {
+                        "message": "✅ Dry run passed - system is ready for updates",
+                        "mode": request.mode,
+                        "dry_run": True,
+                        "health_status": health
+                    }
+                else:
+                    return {
+                        "message": "❌ Dry run failed - system health check failed", 
+                        "mode": request.mode,
+                        "dry_run": True,
+                        "health_status": health
+                    }
+            else:
+                results = scheduler.run_scheduled_update()
+                return {
+                    "message": f"Scheduler update completed: {results.successful_updates}/{results.total_companies} companies",
+                    "mode": request.mode,
+                    "dry_run": False,
+                    "results": {
+                        "total_companies": results.total_companies,
+                        "successful_updates": results.successful_updates,
+                        "failed_updates": results.failed_updates,
+                        "duration_seconds": results.duration_seconds,
+                        "files_added": results.total_files_added,
+                        "files_updated": results.total_files_updated,
+                        "files_removed": results.total_files_removed
+                    }
+                }
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid mode: {request.mode}. Use 'update' or 'health'")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Manual scheduler trigger failed: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
