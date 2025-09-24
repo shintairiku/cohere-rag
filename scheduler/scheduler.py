@@ -341,8 +341,8 @@ Please check the logs for more details.
             cohere_api_key = os.getenv("COHERE_API_KEY")
             if cohere_api_key:
                 co = cohere.Client(cohere_api_key)
-                # Simple API test
-                co.embed(texts=["test"], model="embed-english-v3.0")
+                # Simple API test with input_type parameter
+                co.embed(texts=["test"], model="embed-english-v3.0", input_type="search_document")
                 health_status["checks"]["cohere_api"] = "ok"
             else:
                 health_status["checks"]["cohere_api"] = "error: API key not configured"
