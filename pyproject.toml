@@ -25,4 +25,5 @@ dependencies = [
     "google-cloud-alloydb-connector>=1.7.0",
     "gspread>=6.2.1",
     "pandas>=2.3.2",
+    "google-cloud-secret-manager>=2.24.0",
 ]

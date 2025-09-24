@@ -32,10 +32,9 @@ from dotenv import load_dotenv
 from google.cloud import storage
 from PIL import Image
 
-from .drive_scanner import list_files_in_drive_folder
+from .drive_scanner import list_files_in_drive_folder, _get_google_credentials
 from .img_meta_processor_gdrive import (
     resize_image_if_needed, 
-    _get_google_credentials,
     co_client,
     storage_client
 )
