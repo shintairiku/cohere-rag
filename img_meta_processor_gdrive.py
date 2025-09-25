@@ -4,6 +4,8 @@ import json
 import traceback
 import base64
 import hashlib
+import gc  # ガベージコレクション用
+from datetime import datetime
 
 import cohere
 import numpy as np
@@ -24,6 +26,12 @@ DRIVE_URL = os.getenv("DRIVE_URL")
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
+CHECKPOINT_INTERVAL = 50  # 50枚ごとに中間保存
+
+# デバッグ用設定
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+SIMULATE_MEMORY_ERROR_AT = int(os.getenv("SIMULATE_MEMORY_ERROR_AT", "0"))  # 指定した画像番号でメモリエラーをシミュレート
+SIMULATE_PROCESSING_ERROR_AT = int(os.getenv("SIMULATE_PROCESSING_ERROR_AT", "0"))  # 指定した画像番号で処理エラーをシミュレート
 
 if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
     missing = [
@@ -34,7 +42,14 @@ if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
 
 # --- 2. グローバルクライアントの初期化 ---
 co_client = cohere.Client(COHERE_API_KEY)
-storage_client = storage.Client()
+
+# デバッグモードでは Google Cloud Storage クライアントを初期化しない
+if not DEBUG_MODE:
+    storage_client = storage.Client()
+else:
+    storage_client = None
+    print("🧪 [DEBUG] Skipping Google Cloud Storage client initialization")
+
 MAX_FILE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
 def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
@@ -107,9 +122,26 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         traceback.print_exc()
         return None
 
-def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
+def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
+        # デバッグ: メモリエラーシミュレーション
+        if DEBUG_MODE and SIMULATE_MEMORY_ERROR_AT > 0 and file_index == SIMULATE_MEMORY_ERROR_AT:
+            print(f"🧪 [DEBUG] Simulating memory error at file #{file_index}")
+            raise MemoryError("Simulated out-of-memory event for debugging")
+        
+        # デバッグ: 処理エラーシミュレーション
+        if DEBUG_MODE and SIMULATE_PROCESSING_ERROR_AT > 0 and file_index == SIMULATE_PROCESSING_ERROR_AT:
+            print(f"🧪 [DEBUG] Simulating processing error at file #{file_index}")
+            raise Exception("Simulated processing error for debugging")
+        
+        # デバッグ: APIコストを削減するため、ダミーベクトルを返す
+        if DEBUG_MODE:
+            print(f"🧪 [DEBUG] Returning dummy embedding for '{filename}' (saves API cost)")
+            # 1024次元のダミーベクトル（embed-multilingual-v3.0と同じ次元）
+            dummy_vec = np.random.normal(0, 1, 1024)
+            dummy_vec = dummy_vec / np.linalg.norm(dummy_vec)  # 正規化
+            return dummy_vec
         # 1. ファイル名をtextとしてベクトル化
         text_response = co_client.embed(
             texts=[filename],
@@ -162,44 +194,140 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str) -> np.ndarray:
         print(f"    ⚠️  Warning: Could not generate multimodal embedding for '{filename}'. Skipping. Reason: {e}")
         return None
 
+def load_existing_embeddings(bucket_name: str, uuid: str) -> tuple:
+    """既存のembeddingsと処理済みファイルリストを読み込む"""
+    if DEBUG_MODE:
+        print("🧪 [DEBUG] Skipping existing embeddings check")
+        return [], set()
+        
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(f"{uuid}.json")
+        
+        if blob.exists():
+            existing_data = json.loads(blob.download_as_text())
+            processed_files = {item['filename'] for item in existing_data}
+            print(f"📂 Found existing data with {len(existing_data)} embeddings")
+            return existing_data, processed_files
+        else:
+            print("📂 No existing data found, starting fresh")
+            return [], set()
+    except Exception as e:
+        print(f"⚠️  Could not load existing data: {e}")
+        return [], set()
+
+def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: bool = False):
+    """チェックポイントとしてembeddingsを保存"""
+    if DEBUG_MODE:
+        print(f"🧪 [DEBUG] Skipping save checkpoint ({len(embeddings)} embeddings)")
+        return
+        
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        
+        # 通常の保存先
+        blob = bucket.blob(f"{uuid}.json")
+        
+        # バックアップも作成（最終保存時以外）
+        if not is_final:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_blob = bucket.blob(f"{uuid}_checkpoint_{timestamp}.json")
+            backup_blob.upload_from_string(
+                json.dumps(embeddings, ensure_ascii=False, indent=2),
+                content_type="application/json"
+            )
+            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings (backup: {uuid}_checkpoint_{timestamp}.json)")
+        
+        # メイン保存
+        blob.upload_from_string(
+            json.dumps(embeddings, ensure_ascii=False, indent=2),
+            content_type="application/json"
+        )
+        
+        if is_final:
+            print(f"✅ Final save completed: {len(embeddings)} embeddings")
+        else:
+            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings")
+            
+    except Exception as e:
+        print(f"❌ Failed to save checkpoint: {e}")
+        traceback.print_exc()
+
 def main():
     """Cloud Runジョブとして実行されるメイン関数"""
     print("===================================================")
     print(f"  Starting Vectorization Job for UUID: {UUID}")
     print(f"  Target Drive URL: {DRIVE_URL}")
+    print(f"  Checkpoint Interval: Every {CHECKPOINT_INTERVAL} images")
     print("===================================================")
 
     try:
-        files_to_process = list_files_in_drive_folder(DRIVE_URL)
+        # 既存のembeddingsを読み込む
+        all_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, UUID)
+        
+        if DEBUG_MODE:
+            # デバッグモードではダミーのファイルリストを使用
+            files_to_process = [
+                {'name': 'debug_image_1.jpg', 'id': 'debug_id_1', 'webViewLink': 'https://debug.example.com/1', 'folder_path': '/debug'},
+                {'name': 'debug_image_2.png', 'id': 'debug_id_2', 'webViewLink': 'https://debug.example.com/2', 'folder_path': '/debug'}
+            ]
+            print(f"🧪 [DEBUG] Using {len(files_to_process)} dummy files for testing")
+        else:
+            files_to_process = list_files_in_drive_folder(DRIVE_URL)
+            if not files_to_process:
+                print("✅ No processable images found. Job finished successfully.")
+                return
+        
+        # 既に処理済みのファイルをスキップ
+        files_to_process = [f for f in files_to_process if f['name'] not in processed_files]
+        
         if not files_to_process:
-            print("✅ No processable images found. Job finished successfully.")
+            print(f"✅ All {len(processed_files)} images already processed. Job finished successfully.")
             return
 
-        print(f"Found {len(files_to_process)} images. Initializing Google Drive service...")
+        print(f"Found {len(files_to_process)} new images to process (skipping {len(processed_files)} already processed)")
         
-        all_embeddings = []
-        drive_creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/drive.readonly'])
-        drive_service = build('drive', 'v3', credentials=drive_creds)
+        if not DEBUG_MODE:
+            print("Initializing Google Drive service...")
+            drive_creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/drive.readonly'])
+            drive_service = build('drive', 'v3', credentials=drive_creds)
+        else:
+            drive_service = None
+            print("🧪 [DEBUG] Skipping Google Drive service initialization")
+        
+        # 処理開始時刻を記録
+        start_time = datetime.now()
 
         for i, file_info in enumerate(files_to_process, 1):
-            print(f"  ({i}/{len(files_to_process)}) Processing image...")
+            actual_index = len(processed_files) + i
+            print(f"  ({actual_index}/{len(files_to_process) + len(processed_files)}) Processing: {file_info['name'][:50]}...")
+            
             try:
-                # 1. Download image from Google Drive
-                request = drive_service.files().get_media(fileId=file_info['id'])
-                fh = io.BytesIO()
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-                image_content = fh.getvalue()
+                if DEBUG_MODE:
+                    # デバッグモードではPILでダミー画像を生成
+                    print("    🧪 [DEBUG] Using dummy image data (skipping actual download)")
+                    dummy_img = Image.new('RGB', (100, 100), color='red')
+                    output = io.BytesIO()
+                    dummy_img.save(output, format='JPEG')
+                    image_content = output.getvalue()
+                else:
+                    # 1. Download image from Google Drive
+                    request = drive_service.files().get_media(fileId=file_info['id'])
+                    fh = io.BytesIO()
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                    image_content = fh.getvalue()
                 
                 # 2. Resize if necessary
                 resized_content = resize_image_if_needed(image_content, file_info['name'])
                 if resized_content is None:
+                    print(f"    ⏭️  Skipping due to resize failure")
                     continue
 
                 # 3. Get multimodal embedding
-                embedding = get_multimodal_embedding(resized_content, file_info['name'])
+                embedding = get_multimodal_embedding(resized_content, file_info['name'], actual_index)
                 if embedding is not None:
                     result_data = {
                         "filename": file_info['name'],
@@ -208,29 +336,70 @@ def main():
                         "embedding": embedding.tolist()
                     }
                     all_embeddings.append(result_data)
+                    processed_files.add(file_info['name'])
+                    
+                    # チェックポイント保存
+                    if len(all_embeddings) % CHECKPOINT_INTERVAL == 0:
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        print(f"\n⏱️  Elapsed time: {elapsed:.1f} seconds")
+                        print(f"📊 Progress: {len(all_embeddings)} embeddings generated")
+                        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
+                        
+                        # メモリ解放
+                        gc.collect()
+                        print(f"🧹 Memory cleanup performed\n")
 
             except Exception as e:
-                print(f"    -> Error processing file: {e}")
+                print(f"    ❌ Error processing {file_info['name']}: {e}")
+                # エラーが発生してもチェックポイントを保存
+                if len(all_embeddings) > 0 and len(all_embeddings) % 10 == 0:
+                    print(f"    💾 Saving checkpoint after error...")
+                    save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
         
         if not all_embeddings:
             print("⚠️  No embeddings were generated. Check for previous warnings.")
             return
             
-        print(f"\nGenerated {len(all_embeddings)} embeddings. Uploading to Cloud Storage...")
+        # 最終保存
+        elapsed_total = (datetime.now() - start_time).total_seconds()
+        print(f"\n⏱️  Total processing time: {elapsed_total:.1f} seconds")
+        print(f"📊 Final count: {len(all_embeddings)} embeddings")
         
-        bucket = storage_client.bucket(GCS_BUCKET_NAME)
-        blob = bucket.blob(f"{UUID}.json")
-        blob.upload_from_string(
-            json.dumps(all_embeddings, ensure_ascii=False, indent=2),
-            content_type="application/json"
-        )
+        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=True)
         
         print(f"✅ Successfully saved vector data to gs://{GCS_BUCKET_NAME}/{UUID}.json")
         print("🎉 Job finished successfully.")
+        
+        # チェックポイントファイルのクリーンアップ（オプション）
+        if not DEBUG_MODE:
+            try:
+                bucket = storage_client.bucket(GCS_BUCKET_NAME)
+                for blob in bucket.list_blobs(prefix=f"{UUID}_checkpoint_"):
+                    blob.delete()
+                    print(f"🗑️  Deleted checkpoint: {blob.name}")
+            except Exception as e:
+                print(f"⚠️  Could not cleanup checkpoints: {e}")
+        else:
+            print("🧪 [DEBUG] Skipping checkpoint cleanup")
 
     except Exception as e:
-        print(f"❌ An unexpected error occurred during the job execution:")
+        error_type = type(e).__name__
+        print(f"❌ An unexpected error occurred during the job execution ({error_type}):")
+        if DEBUG_MODE:
+            print(f"🧪 [DEBUG] Error type: {error_type}")
+            if "memory" in str(e).lower() or isinstance(e, MemoryError):
+                print(f"🧪 [DEBUG] Memory error detected - this triggers the checkpoint save functionality")
         traceback.print_exc()
+        
+        # エラー時も最後に保存を試みる
+        if 'all_embeddings' in locals() and all_embeddings:
+            print(f"\n💾 Attempting to save {len(all_embeddings)} embeddings before exit...")
+            try:
+                save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
+                print(f"✅ Emergency save successful")
+            except Exception as save_error:
+                print(f"❌ Emergency save failed: {save_error}")
+        
         raise e
 
 if __name__ == "__main__":
