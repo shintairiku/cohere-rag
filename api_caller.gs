@@ -5,7 +5,7 @@
  * 2. Automatic UUID generation when companies are added
  * 3. Image search triggered by cell edits in company sheets
  * 4. Management of an exclusion list for recently used images
- * * @version 1.6.0
+ * * @version 1.7.1
  * @author Claude Code Assistant (with modifications)
  */
 
@@ -15,15 +15,16 @@
 const Config = {
   // API Configuration - Update this URL to match your Cloud Run service
   API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
-  
+
   // Company List Sheet Configuration
   COMPANY_LIST: {
     SHEET_NAME: "会社一覧",
     UUID_COL: 1,        // A列: UUID
-    NAME_COL: 2,        // B列: 会社名  
-    DRIVE_URL_COL: 3    // C列: GoogleドライブURL
+    NAME_COL: 2,        // B列: 会社名
+    DRIVE_URL_COL: 3,    // C列: GoogleドライブURL
+    PRIORITY_COL: 6     // F列: 優先企業リスト (チェックボックス) <- ★★★ 修正箇所 ★★★
   },
-  
+
   // Platform Sheet Configuration
   PLATFORM: {
     SHEET_PREFIX: "platform-",
@@ -34,11 +35,11 @@ const Config = {
     // F, I, L, O, R -> Checkbox for exclusion
     USE_CHECKBOX_COLUMNS: [6, 9, 12, 15, 18]
   },
-  
+
   // Trigger Text Constants
   TRIGGERS: {
     SIMILAR: "類似画像検索",
-    RANDOM: "ランダム画像検索", 
+    RANDOM: "ランダム画像検索",
     NOT_EXECUTED: "未実行"
   },
 
@@ -46,13 +47,12 @@ const Config = {
   EXCLUSION: {
     SHEET_NAME: "除外リスト",
     COMPANY_NAME_COL: 1,     // A列: 企業名
-    EXCLUSIONS_COL: 2,        // B列: 除外ファイルリスト（JSON形式）
+    EXCLUSIONS_COL: 2,
     LAST_UPDATED_COL: 3,      // C列: 最終更新日
     EDIT_BUTTON_COL: 4,       // D列: 編集ボタン（チェックボックス）
     PERIOD_MONTHS: 2
   }
 };
-
 
 /**
  * スプレッドシートを開いたときにカスタムメニューをUIに追加します。
@@ -61,6 +61,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('✨画像検索メニュー')
     .addItem('選択行のベクトル化を実行', 'callVectorizeApi')
+    .addItem('優先企業のベクトル化を一括実行', 'vectorizePriorityCompanies')
     .addSeparator()
     .addItem('空のUUIDを一括生成', 'generateUuids')
     .addToUi();
@@ -173,7 +174,6 @@ function performSearch(sheet, row, triggerValue) {
     const results = callSearchApi(companyUuid, query, triggerValue, excludeFiles);
     
     writeResultsToSheet(sheet, row, results, triggerValue);
-
     if (results && results.length > 0) {
       statusCell.setValue("実行完了");
     } else {
@@ -200,7 +200,6 @@ function performSearch(sheet, row, triggerValue) {
  */
 function callSearchApi(uuid, query, trigger, excludeFiles) {
   const apiUrl = `${Config.API_BASE_URL}/search`;
-  
   const payload = {
     "uuid": uuid,
     "q": query || "",
@@ -208,7 +207,6 @@ function callSearchApi(uuid, query, trigger, excludeFiles) {
     "trigger": trigger,
     "exclude_files": excludeFiles || []
   };
-
   Logger.log(`[callSearchApi] URL: ${apiUrl}`);
   Logger.log(`[callSearchApi] Payload: ${JSON.stringify(payload)}`);
 
@@ -225,7 +223,7 @@ function callSearchApi(uuid, query, trigger, excludeFiles) {
   const responseText = response.getContentText();
 
   if (responseCode === 200) {
-    return JSON.parse(responseText); 
+    return JSON.parse(responseText);
   } else {
     Logger.log(`API Error Response (${responseCode}): ${responseText}`);
     throw new Error(`APIエラーが発生しました (コード: ${responseCode})`);
@@ -241,7 +239,6 @@ function clearPreviousResults(sheet, row) {
     const MAX_RESULTS = 5;
     const NUM_COLS_PER_RESULT = 3;
     const TOTAL_RESULT_COLS = MAX_RESULTS * NUM_COLS_PER_RESULT;
-    
     const range = sheet.getRange(row, Config.PLATFORM.SEARCH_RESULT_START_COL, 1, TOTAL_RESULT_COLS);
     
     // まず、セル単位でデータ検証をクリア
@@ -256,7 +253,6 @@ function clearPreviousResults(sheet, row) {
     
     // 次に、範囲全体をクリア
     range.clear();
-    
     // さらに、値を明示的に空文字列で上書き
     const emptyRow = new Array(TOTAL_RESULT_COLS).fill("");
     range.setValues([emptyRow]);
@@ -273,7 +269,6 @@ function clearPreviousResults(sheet, row) {
  */
 function writeResultsToSheet(sheet, row, results, triggerValue) {
   Logger.log(`[writeResultsToSheet v1.7] Starting to write results to row ${row}`);
-  
   try {
     const isRandom = (triggerValue === Config.TRIGGERS.RANDOM);
     const MAX_RESULTS = 5;
@@ -281,7 +276,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
     const TOTAL_RESULT_COLS = MAX_RESULTS * NUM_COLS_PER_RESULT;
 
     const rowData = [];
-    const richTextLinks = []; 
+    const richTextLinks = [];
 
     if (!results || !Array.isArray(results)) {
         results = [];
@@ -329,7 +324,7 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
     }
     
     Logger.log("[writeResultsToSheet v1.7] Individual cell write complete.");
-
+    
     // ★★★★★ 重要: ここでflushを呼び出し、シートの更新を確定させる ★★★★★
     SpreadsheetApp.flush();
     Logger.log("[writeResultsToSheet v1.7] Flushed sheet updates.");
@@ -358,7 +353,6 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
         }
     }
     Logger.log(`[writeResultsToSheet v1.7] Applied formats and checkboxes successfully.`);
-    
   } catch (error) {
     Logger.log(`[writeResultsToSheet v1.7] ERROR: ${error.toString()}\n${error.stack}`);
     throw error;
@@ -392,18 +386,15 @@ function addFileToExclusionList(companyName, fileName) {
 
   const lastRow = sheet.getLastRow();
   let companyRow = -1;
-  
   if (lastRow > 1) {
     const companyNames = sheet.getRange(2, Config.EXCLUSION.COMPANY_NAME_COL, lastRow - 1, 1).getValues().flat();
     companyRow = companyNames.indexOf(companyName) + 2;
   }
 
   const now = new Date();
-  
   if (companyRow > 1) {
     const exclusionsCell = sheet.getRange(companyRow, Config.EXCLUSION.EXCLUSIONS_COL);
     const currentExclusionsJson = exclusionsCell.getValue();
-    
     let exclusions = [];
     if (currentExclusionsJson) {
       try {
@@ -427,7 +418,7 @@ function addFileToExclusionList(companyName, fileName) {
       filename: fileName,
       date: now.toISOString()
     });
-    
+
     exclusionsCell.setValue(JSON.stringify({files: exclusions}));
     sheet.getRange(companyRow, Config.EXCLUSION.LAST_UPDATED_COL).setValue(now);
     
@@ -438,7 +429,6 @@ function addFileToExclusionList(companyName, fileName) {
         date: now.toISOString()
       }]
     };
-    
     const newRow = [companyName, JSON.stringify(newExclusions), now, false];
     sheet.appendRow(newRow);
     const newRowIndex = sheet.getLastRow();
@@ -480,7 +470,6 @@ function getActiveExclusionList(companyName) {
     const parsedData = JSON.parse(exclusionsJson);
     const thresholdDate = new Date();
     thresholdDate.setMonth(thresholdDate.getMonth() - Config.EXCLUSION.PERIOD_MONTHS);
-
     let activeExclusions = [];
     
     if (parsedData.files && Array.isArray(parsedData.files)) {
@@ -497,7 +486,6 @@ function getActiveExclusionList(companyName) {
 
     Logger.log(`Found ${activeExclusions.length} active exclusions for company: ${companyName}`);
     return activeExclusions;
-    
   } catch (e) {
     Logger.log(`Error parsing exclusion list for ${companyName}: ${e.message}`);
     return [];
@@ -521,7 +509,6 @@ function openExclusionListEditor(companyName, row) {
   
   const exclusionsJson = sheet.getRange(row, Config.EXCLUSION.EXCLUSIONS_COL).getValue();
   let exclusions = [];
-  
   try {
     const parsedData = JSON.parse(exclusionsJson);
     if (parsedData.files && Array.isArray(parsedData.files)) {
@@ -547,10 +534,9 @@ function openExclusionListEditor(companyName, row) {
   message += '\n削除したいファイル番号をカンマ区切りで入力してください。\n例: 1,3,5\n全て削除する場合は「all」と入力してください。';
   
   const response = ui.prompt('除外リスト編集', message, ui.ButtonSet.OK_CANCEL);
-  
+
   if (response.getSelectedButton() === ui.Button.OK) {
     const input = response.getResponseText().trim();
-    
     if (input === '') {
       return;
     }
@@ -560,7 +546,6 @@ function openExclusionListEditor(companyName, row) {
       ui.alert('完了', `${companyName}の除外リストを全てクリアしました。`, ui.ButtonSet.OK);
     } else {
       const indices = input.split(',').map(s => parseInt(s.trim()) - 1).filter(i => !isNaN(i) && i >= 0 && i < exclusions.length);
-      
       if (indices.length > 0) {
         indices.sort((a, b) => b - a);
         const removedFiles = [];
@@ -569,7 +554,6 @@ function openExclusionListEditor(companyName, row) {
           removedFiles.push(exclusions[i].filename);
           exclusions.splice(i, 1);
         });
-        
         ui.alert('完了', `以下のファイルを除外リストから削除しました:\n${removedFiles.join('\n')}`, ui.ButtonSet.OK);
       }
     }
@@ -606,7 +590,6 @@ function getUuidForSheet(sheet) {
 function callVectorizeApi() {
   const ui = SpreadsheetApp.getUi();
   const activeSheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  
   if (activeSheet.getName() !== Config.COMPANY_LIST.SHEET_NAME) {
     ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートから実行してください。`);
     return;
@@ -651,6 +634,104 @@ function callVectorizeApi() {
   }
 }
 
+/**
+ * 優先企業リストのチェックボックスがONの企業を一括でベクトル化する
+ */
+function vectorizePriorityCompanies() {
+  const ui = SpreadsheetApp.getUi();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
+  if (!sheet) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    ui.alert('ベクトル化対象の企業がありません。');
+    return;
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
+  const values = range.getValues();
+  
+  const companiesToVectorize = [];
+  for (let i = 0; i < values.length; i++) {
+    const isPriority = values[i][Config.COMPANY_LIST.PRIORITY_COL - 1];
+    if (isPriority === true) {
+      const companyName = values[i][Config.COMPANY_LIST.NAME_COL - 1];
+      const uuid = values[i][Config.COMPANY_LIST.UUID_COL - 1];
+      const driveUrl = values[i][Config.COMPANY_LIST.DRIVE_URL_COL - 1];
+      if (companyName && uuid && driveUrl) {
+        companiesToVectorize.push({ name: companyName, uuid: uuid, driveUrl: driveUrl });
+      }
+    }
+  }
+
+  if (companiesToVectorize.length === 0) {
+    ui.alert('優先企業にチェックが入っている企業がありません。');
+    return;
+  }
+
+  let successCount = 0;
+  let failureCount = 0;
+  const errors = [];
+
+  // showModalDialog is deprecated, using a simple toast message instead for broader compatibility.
+  SpreadsheetApp.getActiveSpreadsheet().toast(`ベクトル化処理を開始します... (${companiesToVectorize.length}件)`, "処理中", -1);
+
+  // 逐次処理に変更: forループを使用してawaitを含む処理に対応
+  for (let i = 0; i < companiesToVectorize.length; i++) {
+    const company = companiesToVectorize[i];
+    
+    // 進捗状況を表示
+    SpreadsheetApp.getActiveSpreadsheet().toast(`処理中... (${i + 1}/${companiesToVectorize.length}): ${company.name}`, "処理中", -1);
+    
+    try {
+      const payload = JSON.stringify({ "uuid": company.uuid, "drive_url": company.driveUrl });
+      const params = {
+        method: "post",
+        contentType: "application/json",
+        headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+        payload: payload,
+        muteHttpExceptions: true,
+      };
+
+      const apiUrl = `${Config.API_BASE_URL}/vectorize`;
+      const response = UrlFetchApp.fetch(apiUrl, params);
+      const responseCode = response.getResponseCode();
+
+      if (responseCode === 202) {
+        successCount++;
+        Logger.log(`Successfully requested vectorization for ${company.name}`);
+      } else {
+        failureCount++;
+        const errorMessage = `Failed to vectorize ${company.name} (Code: ${responseCode}): ${response.getContentText()}`;
+        errors.push(errorMessage);
+        Logger.log(errorMessage);
+      }
+    } catch (error) {
+      failureCount++;
+      const errorMessage = `Error vectorizing ${company.name}: ${error.message}`;
+      errors.push(errorMessage);
+      Logger.log(errorMessage);
+    }
+    
+    // 次のリクエストまで3秒待機（Cloud Runへの負荷を軽減）
+    // 最後の企業の場合は待機しない
+    if (i < companiesToVectorize.length - 1) {
+      Utilities.sleep(3000); // 3秒待機
+    }
+  }
+
+  SpreadsheetApp.getActiveSpreadsheet().toast("一括ベクトル化処理が完了しました。", "完了", 5);
+  let resultMessage = `一括ベクトル化処理が完了しました。\n\n成功: ${successCount}件\n失敗: ${failureCount}件`;
+  if (failureCount > 0) {
+    resultMessage += "\n\nエラー詳細:\n" + errors.join("\n");
+  }
+  ui.alert(resultMessage);
+}
+
+
 function generateUuids() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
   if (!sheet) {
@@ -681,4 +762,3 @@ function generateUuids() {
     SpreadsheetApp.getUi().alert('UUIDが空の行はありませんでした。');
   }
 }
-
