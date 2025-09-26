@@ -349,8 +349,8 @@ def main():
                     all_embeddings.append(result_data)
                     processed_files.add(file_info['name'])
                     
-                    # 定期的なチェックポイント保存（5件ごと - テスト用）
-                    if len(all_embeddings) % 5 == 0 and len(all_embeddings) > 0:
+                    # 定期的なチェックポイント保存（100件ごと）
+                    if len(all_embeddings) % 100 == 0 and len(all_embeddings) > 0:
                         elapsed = (datetime.now() - start_time).total_seconds()
                         print(f"\n⏱️  Elapsed time: {elapsed:.1f} seconds")
                         print(f"📊 Progress: {len(all_embeddings)} embeddings generated")
