@@ -286,13 +286,15 @@ def main():
                 return
         
         # 既に処理済みのファイルをスキップ
+        original_count = len(files_to_process)
         files_to_process = [f for f in files_to_process if f['name'] not in processed_files]
+        skipped_count = original_count - len(files_to_process)
         
         if not files_to_process:
-            print(f"✅ All {len(processed_files)} images already processed. Job finished successfully.")
+            print(f"✅ All {skipped_count} images already processed (found {original_count} total, {len(processed_files)} in existing data). Job finished successfully.")
             return
 
-        print(f"Found {len(files_to_process)} new images to process (skipping {len(processed_files)} already processed)")
+        print(f"Found {len(files_to_process)} new images to process (skipping {skipped_count} already processed)")
         
         if not DEBUG_MODE:
             print("Initializing Google Drive service...")
