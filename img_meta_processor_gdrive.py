@@ -352,7 +352,7 @@ def main():
                     continue
 
                 # 3. Get multimodal embedding
-                embedding = get_multimodal_embedding(resized_content, file_info['name'], actual_index)
+                embedding = get_multimodal_embedding(resized_content, file_info['name'], current_index)
                 if embedding is not None:
                     result_data = {
                         "filename": file_info['name'],
