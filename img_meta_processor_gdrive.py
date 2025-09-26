@@ -5,6 +5,8 @@ import traceback
 import base64
 import hashlib
 import gc  # ガベージコレクション用
+import signal  # シグナルハンドリング用
+import sys
 from datetime import datetime
 
 import cohere
@@ -26,7 +28,7 @@ DRIVE_URL = os.getenv("DRIVE_URL")
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
-CHECKPOINT_INTERVAL = 50  # 50枚ごとに中間保存
+# CHECKPOINT_INTERVAL は削除（エラー時のみ保存するため不要）
 
 # デバッグ用設定
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -255,15 +257,34 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
 
 def main():
     """Cloud Runジョブとして実行されるメイン関数"""
+    all_embeddings = []  # グローバルに参照できるように最初に初期化
+    
+    # シグナルハンドラーの設定
+    def signal_handler(signum, frame):
+        """シグナル受信時の処理"""
+        print(f"\n⚠️  Signal {signum} received. Attempting to save current progress...")
+        if all_embeddings:
+            try:
+                save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
+                print(f"✅ Emergency save successful: {len(all_embeddings)} embeddings saved")
+            except Exception as e:
+                print(f"❌ Emergency save failed: {e}")
+        sys.exit(1)
+    
+    # SIGTERM（Cloud Runからの終了シグナル）とSIGINT（Ctrl+C）を捕捉
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     print("===================================================")
     print(f"  Starting Vectorization Job for UUID: {UUID}")
     print(f"  Target Drive URL: {DRIVE_URL}")
-    print(f"  Checkpoint Interval: Every {CHECKPOINT_INTERVAL} images")
+    print(f"  Checkpoint Mode: Save on error only")
     print("===================================================")
 
     try:
         # 既存のembeddingsを読み込む
-        all_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, UUID)
+        existing_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, UUID)
+        all_embeddings = existing_embeddings  # 読み込んだデータで初期化
         
         if DEBUG_MODE:
             # デバッグモードではダミーのファイルリストを使用
@@ -338,12 +359,11 @@ def main():
                     all_embeddings.append(result_data)
                     processed_files.add(file_info['name'])
                     
-                    # チェックポイント保存
-                    if len(all_embeddings) % CHECKPOINT_INTERVAL == 0:
+                    # 進捗表示（100件ごと）
+                    if len(all_embeddings) % 100 == 0:
                         elapsed = (datetime.now() - start_time).total_seconds()
                         print(f"\n⏱️  Elapsed time: {elapsed:.1f} seconds")
                         print(f"📊 Progress: {len(all_embeddings)} embeddings generated")
-                        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
                         
                         # メモリ解放
                         gc.collect()
@@ -351,9 +371,9 @@ def main():
 
             except Exception as e:
                 print(f"    ❌ Error processing {file_info['name']}: {e}")
-                # エラーが発生してもチェックポイントを保存
-                if len(all_embeddings) > 0 and len(all_embeddings) % 10 == 0:
-                    print(f"    💾 Saving checkpoint after error...")
+                # エラーが発生したらチェックポイントを保存
+                if len(all_embeddings) > 0:
+                    print(f"    💾 Saving checkpoint after error (total: {len(all_embeddings)} embeddings)...")
                     save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
         
         if not all_embeddings:
