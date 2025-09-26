@@ -184,8 +184,8 @@ class SearchService:
         
         response = self.cohere_client.embed(
             texts=[query], 
-            # model="embed-multilingual-v3.0", 
-            model="embed-v4.0",
+            model="embed-multilingual-v3.0", 
+            # model="embed-v4.0",
             input_type="search_query"
         )
         query_embedding = response.embeddings[0]
