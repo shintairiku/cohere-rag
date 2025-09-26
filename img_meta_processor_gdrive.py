@@ -219,45 +219,23 @@ def load_existing_embeddings(bucket_name: str, uuid: str) -> tuple:
         return [], set()
 
 def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: bool = False):
-    """チェックポイントとしてembeddingsを保存（古いチェックポイントは自動削除）"""
+    """チェックポイントとしてembeddingsを{uuid}.jsonに保存"""
     if DEBUG_MODE:
         print(f"🧪 [DEBUG] Skipping save checkpoint ({len(embeddings)} embeddings)")
         return
         
     try:
         bucket = storage_client.bucket(bucket_name)
-        
-        # メイン保存先を常に更新
         blob = bucket.blob(f"{uuid}.json")
         blob.upload_from_string(
             json.dumps(embeddings, ensure_ascii=False, indent=2),
             content_type="application/json"
         )
         
-        # チェックポイント管理（最終保存時以外）
-        if not is_final:
-            # 既存のチェックポイントファイルを削除（最新1つのみ保持）
-            checkpoint_prefix = f"{uuid}_checkpoint_"
-            existing_checkpoints = list(bucket.list_blobs(prefix=checkpoint_prefix))
-            
-            # 新しいチェックポイントを作成
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_checkpoint_name = f"{checkpoint_prefix}{timestamp}.json"
-            new_checkpoint_blob = bucket.blob(new_checkpoint_name)
-            new_checkpoint_blob.upload_from_string(
-                json.dumps(embeddings, ensure_ascii=False, indent=2),
-                content_type="application/json"
-            )
-            
-            # 古いチェックポイントを削除（最新のみ保持）
-            for old_checkpoint in existing_checkpoints:
-                if old_checkpoint.name != new_checkpoint_name:
-                    old_checkpoint.delete()
-                    print(f"🗑️  Removed old checkpoint: {old_checkpoint.name}")
-            
-            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings (latest: {new_checkpoint_name})")
-        else:
+        if is_final:
             print(f"✅ Final save completed: {len(embeddings)} embeddings")
+        else:
+            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings to {uuid}.json")
             
     except Exception as e:
         print(f"❌ Failed to save checkpoint: {e}")
@@ -404,18 +382,6 @@ def main():
         
         print(f"✅ Successfully saved vector data to gs://{GCS_BUCKET_NAME}/{UUID}.json")
         print("🎉 Job finished successfully.")
-        
-        # チェックポイントファイルのクリーンアップ（オプション）
-        if not DEBUG_MODE:
-            try:
-                bucket = storage_client.bucket(GCS_BUCKET_NAME)
-                for blob in bucket.list_blobs(prefix=f"{UUID}_checkpoint_"):
-                    blob.delete()
-                    print(f"🗑️  Deleted checkpoint: {blob.name}")
-            except Exception as e:
-                print(f"⚠️  Could not cleanup checkpoints: {e}")
-        else:
-            print("🧪 [DEBUG] Skipping checkpoint cleanup")
 
     except Exception as e:
         error_type = type(e).__name__
