@@ -219,7 +219,7 @@ def load_existing_embeddings(bucket_name: str, uuid: str) -> tuple:
         return [], set()
 
 def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: bool = False):
-    """チェックポイントとしてembeddingsを保存"""
+    """チェックポイントとしてembeddingsを保存（古いチェックポイントは自動削除）"""
     if DEBUG_MODE:
         print(f"🧪 [DEBUG] Skipping save checkpoint ({len(embeddings)} embeddings)")
         return
@@ -227,29 +227,37 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
     try:
         bucket = storage_client.bucket(bucket_name)
         
-        # 通常の保存先
+        # メイン保存先を常に更新
         blob = bucket.blob(f"{uuid}.json")
-        
-        # バックアップも作成（最終保存時以外）
-        if not is_final:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_blob = bucket.blob(f"{uuid}_checkpoint_{timestamp}.json")
-            backup_blob.upload_from_string(
-                json.dumps(embeddings, ensure_ascii=False, indent=2),
-                content_type="application/json"
-            )
-            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings (backup: {uuid}_checkpoint_{timestamp}.json)")
-        
-        # メイン保存
         blob.upload_from_string(
             json.dumps(embeddings, ensure_ascii=False, indent=2),
             content_type="application/json"
         )
         
-        if is_final:
-            print(f"✅ Final save completed: {len(embeddings)} embeddings")
+        # チェックポイント管理（最終保存時以外）
+        if not is_final:
+            # 既存のチェックポイントファイルを削除（最新1つのみ保持）
+            checkpoint_prefix = f"{uuid}_checkpoint_"
+            existing_checkpoints = list(bucket.list_blobs(prefix=checkpoint_prefix))
+            
+            # 新しいチェックポイントを作成
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_checkpoint_name = f"{checkpoint_prefix}{timestamp}.json"
+            new_checkpoint_blob = bucket.blob(new_checkpoint_name)
+            new_checkpoint_blob.upload_from_string(
+                json.dumps(embeddings, ensure_ascii=False, indent=2),
+                content_type="application/json"
+            )
+            
+            # 古いチェックポイントを削除（最新のみ保持）
+            for old_checkpoint in existing_checkpoints:
+                if old_checkpoint.name != new_checkpoint_name:
+                    old_checkpoint.delete()
+                    print(f"🗑️  Removed old checkpoint: {old_checkpoint.name}")
+            
+            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings (latest: {new_checkpoint_name})")
         else:
-            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings")
+            print(f"✅ Final save completed: {len(embeddings)} embeddings")
             
     except Exception as e:
         print(f"❌ Failed to save checkpoint: {e}")
@@ -363,11 +371,14 @@ def main():
                     all_embeddings.append(result_data)
                     processed_files.add(file_info['name'])
                     
-                    # 進捗表示（100件ごと）
-                    if len(all_embeddings) % 100 == 0:
+                    # 定期的なチェックポイント保存（5件ごと - テスト用）
+                    if len(all_embeddings) % 5 == 0 and len(all_embeddings) > 0:
                         elapsed = (datetime.now() - start_time).total_seconds()
                         print(f"\n⏱️  Elapsed time: {elapsed:.1f} seconds")
                         print(f"📊 Progress: {len(all_embeddings)} embeddings generated")
+                        
+                        # チェックポイント保存（OOM対策）
+                        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
                         
                         # メモリ解放
                         gc.collect()
