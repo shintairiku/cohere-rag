@@ -49,7 +49,9 @@ steps:
     - '--set-env-vars=GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},COHERE_API_KEY=${_COHERE_API_KEY}'
     - '--task-timeout=36000'
     - '--parallelism=1'
-    - '--max-retries=1'
+    - '--max-retries=0'
+    - '--memory=2Gi'
+    - '--cpu=2'
 
 images:
 - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
