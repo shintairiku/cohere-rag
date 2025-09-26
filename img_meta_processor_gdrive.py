@@ -318,10 +318,14 @@ def main():
         
         # 処理開始時刻を記録
         start_time = datetime.now()
+        
+        # 進捗表示用の固定値を計算
+        total_files = len(files_to_process) + len(processed_files)
+        initial_processed_count = len(processed_files)
 
         for i, file_info in enumerate(files_to_process, 1):
-            actual_index = len(processed_files) + i
-            print(f"  ({actual_index}/{len(files_to_process) + len(processed_files)}) Processing: {file_info['name'][:50]}...")
+            current_index = initial_processed_count + i
+            print(f"  ({current_index}/{total_files}) Processing: {file_info['name'][:50]}...")
             
             try:
                 if DEBUG_MODE:
