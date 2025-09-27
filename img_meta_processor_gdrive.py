@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 from google.cloud import storage
 from PIL import Image
 
+# Decompression bomb対策: 最大画像ピクセル数を設定（約500MP）
+Image.MAX_IMAGE_PIXELS = 500_000_000
+
 import google.auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -60,14 +63,38 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
     Cohere APIは解像度ベースで制限を行うため、ファイルサイズではなくピクセル数で判定。
     """
     try:
-        img = Image.open(io.BytesIO(image_content))
+        # まず画像として読み込めるか検証
+        try:
+            img = Image.open(io.BytesIO(image_content))
+            # 画像を読み込んで基本情報を確認（実際にピクセルデータを読み込む）
+            img.verify()
+            # verifyは画像を閉じるので、再度開く
+            img = Image.open(io.BytesIO(image_content))
+        except Image.DecompressionBombError as e:
+            print(f"    ⚠️  Decompression bomb warning for '{filename}': {e}")
+            print(f"       File might be too large or corrupted. Skipping...")
+            return None
+        except OSError as e:
+            print(f"    ⚠️  Cannot identify image file '{filename}': {e}")
+            print(f"       File might not be a valid image or is corrupted. Skipping...")
+            return None
+        except Exception as e:
+            print(f"    ⚠️  Unexpected error opening image '{filename}': {e}")
+            return None
+            
         original_width, original_height = img.size
         original_pixels = original_width * original_height
         original_size_mb = len(image_content) / (1024 * 1024)
         
-        # Cohere APIの解像度制限（推定値: 5MP = 5,000,000ピクセル）
-        # 安全マージンを考慮して4.5MP (4,500,000ピクセル) を上限とする
-        MAX_PIXELS = 4_500_000
+        # 極端に大きい画像の場合は警告を出してスキップ
+        if original_pixels > 100_000_000:  # 100MP以上
+            print(f"    ⚠️  Extremely large image: {original_width}x{original_height} ({original_pixels:,} pixels)")
+            print(f"       This image is too large to process safely. Skipping...")
+            return None
+        
+        # Cohere API embed-v4.0の解像度制限: 約240万ピクセル
+        # 安全マージンを考慮して2.3MP (2,300,000ピクセル) を上限とする
+        MAX_PIXELS = 2_300_000
         
         # 解像度チェック
         if original_pixels <= MAX_PIXELS:
