@@ -138,9 +138,18 @@ function performSearch(sheet, row, triggerValue) {
     }
 
     const companyName = sheet.getName().substring(Config.PLATFORM.SHEET_PREFIX.length);
-    const excludeFiles = getExcludeFilesFromCheckboxes(sheet);
-    Logger.log(`[performSearch] Excluding ${excludeFiles.length} files from checkboxes for company: ${companyName}`);
+    Logger.log(`[performSearch] Getting exclusion list from checkboxes...`);
+    
+    let excludeFiles = [];
+    try {
+      excludeFiles = getExcludeFilesFromCheckboxes(sheet);
+      Logger.log(`[performSearch] Successfully got ${excludeFiles.length} files to exclude`);
+    } catch (excludeError) {
+      Logger.log(`[performSearch] ERROR in getExcludeFilesFromCheckboxes: ${excludeError.toString()}`);
+      excludeFiles = []; // フォールバック：除外なしで継続
+    }
 
+    Logger.log(`[performSearch] Calling API with excludeFiles: ${JSON.stringify(excludeFiles)}`);
     const results = callSearchApi(companyUuid, query, triggerValue, excludeFiles);
     
     writeResultsToSheet(sheet, row, results, triggerValue);
@@ -360,14 +369,26 @@ function getExcludeFilesFromCheckboxes(sheet) {
         const checkboxCell = sheet.getRange(row, checkboxCol);
         const fileNameCell = sheet.getRange(row, fileNameCol);
         const isChecked = checkboxCell.getValue() === true;
-        const fileName = fileNameCell.getRichTextValue().getText();
         
-        if (isChecked && fileName) {
-          excludeFiles.push(fileName);
+        // ファイル名の取得を安全に行う
+        let fileName = "";
+        try {
+          const richText = fileNameCell.getRichTextValue();
+          if (richText) {
+            fileName = richText.getText();
+          }
+        } catch (richTextError) {
+          // RichTextが無い場合は通常の値を取得
+          fileName = fileNameCell.getValue() || "";
+        }
+        
+        if (isChecked && fileName && fileName.trim() !== "") {
+          excludeFiles.push(fileName.trim());
           Logger.log(`   Found checked file: ${fileName} at row ${row}, col ${checkboxCol}`);
         }
       } catch (e) {
         // エラーは無視（空セルなど）
+        Logger.log(`   Error processing row ${row}, col ${checkboxCol}: ${e.message}`);
       }
     }
   }
