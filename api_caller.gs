@@ -14,7 +14,8 @@
  */
 const Config = {
   // API Configuration - Update this URL to match your Cloud Run service
-  API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
+  // API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
+  API_BASE_URL: "https://cohere-rag-dev-742231208085.asia-northeast1.run.app",
 
   // Company List Sheet Configuration
   COMPANY_LIST: {
@@ -29,6 +30,7 @@ const Config = {
   PLATFORM: {
     SHEET_PREFIX: "platform-",
     SEARCH_QUERY_COL: 1,      // A列: 検索クエリ
+    SEARCH_DATE_COL: 2,       // B列: 検索実行日時
     SEARCH_TRIGGER_COL: 3,    // C列: 実行状況 (トリガー)
     SEARCH_RESULT_START_COL: 4, // D列: 結果出力の開始列
     // D, G, J, M, P -> Filename
@@ -83,6 +85,9 @@ function handleSheetEdit(e) {
         performSearch(sheet, row, value);
       } else if (value === Config.TRIGGERS.NOT_EXECUTED) {
         clearPreviousResults(sheet, row);
+        // B列の日時もクリア
+        const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+        dateCell.setValue("");
       }
     }
 
@@ -127,6 +132,13 @@ function performSearch(sheet, row, triggerValue) {
     
     clearPreviousResults(sheet, row);
     statusCell.setValue("検索中...");
+    
+    // 検索実行日時をB列に記録
+    const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+    const now = new Date();
+    const dateString = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+    dateCell.setValue(dateString);
+    
     SpreadsheetApp.flush();
 
     const companyUuid = getUuidForSheet(sheet);
@@ -235,6 +247,10 @@ function clearPreviousResults(sheet, row) {
     // さらに、値を明示的に空文字列で上書き
     const emptyRow = new Array(TOTAL_RESULT_COLS).fill("");
     range.setValues([emptyRow]);
+    
+    // B列の検索日時もクリア
+    const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+    dateCell.setValue("");
     
     Logger.log(`[clearPreviousResults] Successfully cleared ${TOTAL_RESULT_COLS} columns`);
   } catch (error) {
