@@ -14,7 +14,8 @@
  */
 const Config = {
   // API Configuration - Update this URL to match your Cloud Run service
-  API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
+  // API_BASE_URL: "https://cohere-rag-742231208085.asia-northeast1.run.app",
+  API_BASE_URL: "https://cohere-rag-dev-742231208085.asia-northeast1.run.app",
 
   // Company List Sheet Configuration
   COMPANY_LIST: {
@@ -29,6 +30,7 @@ const Config = {
   PLATFORM: {
     SHEET_PREFIX: "platform-",
     SEARCH_QUERY_COL: 1,      // A列: 検索クエリ
+    SEARCH_DATE_COL: 2,       // B列: 検索実行日時
     SEARCH_TRIGGER_COL: 3,    // C列: 実行状況 (トリガー)
     SEARCH_RESULT_START_COL: 4, // D列: 結果出力の開始列
     // D, G, J, M, P -> Filename
@@ -43,15 +45,7 @@ const Config = {
     NOT_EXECUTED: "未実行"
   },
 
-  // Exclusion List Configuration (New)
-  EXCLUSION: {
-    SHEET_NAME: "除外リスト",
-    COMPANY_NAME_COL: 1,     // A列: 企業名
-    EXCLUSIONS_COL: 2,
-    LAST_UPDATED_COL: 3,      // C列: 最終更新日
-    EDIT_BUTTON_COL: 4,       // D列: 編集ボタン（チェックボックス）
-    PERIOD_MONTHS: 2
-  }
+  // Exclusion List Configuration (削除予定)
 };
 
 /**
@@ -91,6 +85,9 @@ function handleSheetEdit(e) {
         performSearch(sheet, row, value);
       } else if (value === Config.TRIGGERS.NOT_EXECUTED) {
         clearPreviousResults(sheet, row);
+        // B列の日時もクリア
+        const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+        dateCell.setValue("");
       }
     }
 
@@ -104,29 +101,7 @@ function handleSheetEdit(e) {
        }
     }
 
-    // --- 除外リストへの追加処理 (チェックボックス操作) ---
-    else if (isChecked) {
-      // シナリオ1: 検索結果シートから除外リストへ追加
-      if (sheetName.startsWith(Config.PLATFORM.SHEET_PREFIX) && Config.PLATFORM.USE_CHECKBOX_COLUMNS.includes(col)) {
-        Logger.log("-> Condition Met: Add to exclusion list trigger.");
-        const fileNameCell = sheet.getRange(row, col - 2); // ファイル名はチェックボックスの2つ左のセル (D, G, J...)
-        const fileName = fileNameCell.getRichTextValue().getText(); // リンク付きでもテキストを取得
-        
-        if (fileName) {
-          const companyName = sheetName.substring(Config.PLATFORM.SHEET_PREFIX.length);
-          addFileToExclusionList(companyName, fileName);
-          range.setValue(false); // 処理後にチェックを外す
-          SpreadsheetApp.getActiveSpreadsheet().toast(`「${fileName}」を${companyName}の除外リストに追加しました。`);
-        }
-      }
-      // シナリオ2: 除外リストシートの編集ボタン
-      else if (sheetName === Config.EXCLUSION.SHEET_NAME && col === Config.EXCLUSION.EDIT_BUTTON_COL && row > 1) {
-        Logger.log("-> Condition Met: Edit exclusion list trigger.");
-        range.setValue(false); // チェックを外す
-        const companyName = sheet.getRange(row, Config.EXCLUSION.COMPANY_NAME_COL).getValue();
-        openExclusionListEditor(companyName, row);
-      }
-    }
+    // チェックボックス処理は削除（新仕様では状態を維持）
 
   } catch (err) {
     Logger.log(`[FATAL ERROR in handleSheetEdit] ${err.toString()}\n${err.stack}`);
@@ -157,6 +132,13 @@ function performSearch(sheet, row, triggerValue) {
     
     clearPreviousResults(sheet, row);
     statusCell.setValue("検索中...");
+    
+    // 検索実行日時をB列に記録
+    const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+    const now = new Date();
+    const dateString = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+    dateCell.setValue(dateString);
+    
     SpreadsheetApp.flush();
 
     const companyUuid = getUuidForSheet(sheet);
@@ -168,9 +150,18 @@ function performSearch(sheet, row, triggerValue) {
     }
 
     const companyName = sheet.getName().substring(Config.PLATFORM.SHEET_PREFIX.length);
-    const excludeFiles = getActiveExclusionList(companyName);
-    Logger.log(`[performSearch] Excluding ${excludeFiles.length} files from search for company: ${companyName}`);
+    Logger.log(`[performSearch] Getting exclusion list from checkboxes...`);
+    
+    let excludeFiles = [];
+    try {
+      excludeFiles = getExcludeFilesFromCheckboxes(sheet);
+      Logger.log(`[performSearch] Successfully got ${excludeFiles.length} files to exclude`);
+    } catch (excludeError) {
+      Logger.log(`[performSearch] ERROR in getExcludeFilesFromCheckboxes: ${excludeError.toString()}`);
+      excludeFiles = []; // フォールバック：除外なしで継続
+    }
 
+    Logger.log(`[performSearch] Calling API with excludeFiles: ${JSON.stringify(excludeFiles)}`);
     const results = callSearchApi(companyUuid, query, triggerValue, excludeFiles);
     
     writeResultsToSheet(sheet, row, results, triggerValue);
@@ -256,6 +247,10 @@ function clearPreviousResults(sheet, row) {
     // さらに、値を明示的に空文字列で上書き
     const emptyRow = new Array(TOTAL_RESULT_COLS).fill("");
     range.setValues([emptyRow]);
+    
+    // B列の検索日時もクリア
+    const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
+    dateCell.setValue("");
     
     Logger.log(`[clearPreviousResults] Successfully cleared ${TOTAL_RESULT_COLS} columns`);
   } catch (error) {
@@ -364,205 +359,62 @@ function writeResultsToSheet(sheet, row, results, triggerValue) {
 // 除外リスト管理の関数 (新規追加セクション)
 // =======================================================================
 
-/**
- * 指定された企業の除外リストにファイルを追加します。
- * @param {string} companyName - 企業名
- * @param {string} fileName - 追加するファイル名
- */
-function addFileToExclusionList(companyName, fileName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(Config.EXCLUSION.SHEET_NAME);
-
-  if (!sheet) {
-    sheet = ss.insertSheet(Config.EXCLUSION.SHEET_NAME, 0);
-    const headers = [["企業名", "除外ファイルリスト", "最終更新日", "編集"]];
-    sheet.getRange("A1:D1").setValues(headers).setFontWeight("bold");
-    sheet.setColumnWidth(Config.EXCLUSION.COMPANY_NAME_COL, 200);
-    sheet.setColumnWidth(Config.EXCLUSION.EXCLUSIONS_COL, 600);
-    sheet.setColumnWidth(Config.EXCLUSION.LAST_UPDATED_COL, 150);
-    sheet.setColumnWidth(Config.EXCLUSION.EDIT_BUTTON_COL, 80);
-    sheet.setFrozenRows(1);
-  }
-
-  const lastRow = sheet.getLastRow();
-  let companyRow = -1;
-  if (lastRow > 1) {
-    const companyNames = sheet.getRange(2, Config.EXCLUSION.COMPANY_NAME_COL, lastRow - 1, 1).getValues().flat();
-    companyRow = companyNames.indexOf(companyName) + 2;
-  }
-
-  const now = new Date();
-  if (companyRow > 1) {
-    const exclusionsCell = sheet.getRange(companyRow, Config.EXCLUSION.EXCLUSIONS_COL);
-    const currentExclusionsJson = exclusionsCell.getValue();
-    let exclusions = [];
-    if (currentExclusionsJson) {
-      try {
-        const parsedData = JSON.parse(currentExclusionsJson);
-        if (Array.isArray(parsedData)) {
-          exclusions = parsedData.map(f => ({filename: f, date: now.toISOString()}));
-        } else if (parsedData.files) {
-          exclusions = parsedData.files;
-        }
-      } catch (e) {
-        Logger.log(`Error parsing exclusions for ${companyName}: ${e.message}`);
-      }
-    }
-    
-    if (exclusions.some(f => f.filename === fileName)) {
-      SpreadsheetApp.getActiveSpreadsheet().toast(`「${fileName}」は既に${companyName}の除外リストに存在します。`);
-      return;
-    }
-    
-    exclusions.push({
-      filename: fileName,
-      date: now.toISOString()
-    });
-
-    exclusionsCell.setValue(JSON.stringify({files: exclusions}));
-    sheet.getRange(companyRow, Config.EXCLUSION.LAST_UPDATED_COL).setValue(now);
-    
-  } else {
-    const newExclusions = {
-      files: [{
-        filename: fileName,
-        date: now.toISOString()
-      }]
-    };
-    const newRow = [companyName, JSON.stringify(newExclusions), now, false];
-    sheet.appendRow(newRow);
-    const newRowIndex = sheet.getLastRow();
-    sheet.getRange(newRowIndex, Config.EXCLUSION.EDIT_BUTTON_COL).insertCheckboxes();
-  }
-  
-  Logger.log(`Added ${fileName} to exclusion list for company: ${companyName}`);
-}
+// 除外リスト関連の関数は削除（新仕様では不要）
 
 /**
- * 指定された企業の現在有効な（指定期間内の）除外ファイルリストを取得します。
- * @param {string} companyName - 企業名
+ * 検索結果シートのチェックボックス状態を参照して除外ファイルリストを取得します。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 対象のシート
  * @returns {string[]} 除外するファイル名の配列
  */
-function getActiveExclusionList(companyName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(Config.EXCLUSION.SHEET_NAME);
-  
-  if (!sheet || sheet.getLastRow() < 2) {
-    return [];
-  }
-
+function getExcludeFilesFromCheckboxes(sheet) {
+  const excludeFiles = [];
   const lastRow = sheet.getLastRow();
-  const companyNames = sheet.getRange(2, Config.EXCLUSION.COMPANY_NAME_COL, lastRow - 1, 1).getValues().flat();
-  const companyRow = companyNames.indexOf(companyName) + 2;
   
-  if (companyRow < 2) {
-    Logger.log(`No exclusion list found for company: ${companyName}`);
-    return [];
-  }
-
-  const exclusionsJson = sheet.getRange(companyRow, Config.EXCLUSION.EXCLUSIONS_COL).getValue();
-  
-  if (!exclusionsJson) {
-    return [];
-  }
-
-  try {
-    const parsedData = JSON.parse(exclusionsJson);
-    const thresholdDate = new Date();
-    thresholdDate.setMonth(thresholdDate.getMonth() - Config.EXCLUSION.PERIOD_MONTHS);
-    let activeExclusions = [];
-    
-    if (parsedData.files && Array.isArray(parsedData.files)) {
-      activeExclusions = parsedData.files
-        .filter(f => {
-          if (!f.date) return true;
-          return new Date(f.date) >= thresholdDate;
-        })
-        .map(f => f.filename);
-    }
-    else if (Array.isArray(parsedData)) {
-      activeExclusions = parsedData;
-    }
-
-    Logger.log(`Found ${activeExclusions.length} active exclusions for company: ${companyName}`);
-    return activeExclusions;
-  } catch (e) {
-    Logger.log(`Error parsing exclusion list for ${companyName}: ${e.message}`);
-    return [];
-  }
-}
-
-
-/**
- * 除外リスト編集用のダイアログを開きます
- * @param {string} companyName - 企業名
- * @param {number} row - 編集する行番号
- */
-function openExclusionListEditor(companyName, row) {
-  const ui = SpreadsheetApp.getUi();
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.EXCLUSION.SHEET_NAME);
-  
-  if (!sheet) {
-    ui.alert('エラー', '除外リストシートが見つかりません。', ui.ButtonSet.OK);
-    return;
+  if (lastRow < 2) {
+    return excludeFiles;
   }
   
-  const exclusionsJson = sheet.getRange(row, Config.EXCLUSION.EXCLUSIONS_COL).getValue();
-  let exclusions = [];
-  try {
-    const parsedData = JSON.parse(exclusionsJson);
-    if (parsedData.files && Array.isArray(parsedData.files)) {
-      exclusions = parsedData.files;
-    } else if (Array.isArray(parsedData)) {
-      exclusions = parsedData.map(f => ({filename: f, date: new Date().toISOString()}));
-    }
-  } catch (e) {
-    Logger.log(`Error parsing exclusions: ${e.message}`);
-  }
+  Logger.log(`[getExcludeFilesFromCheckboxes] Checking checkboxes for rows 2-${lastRow}`);
   
-  let message = `企業: ${companyName}\n\n現在の除外ファイル:\n`;
-  
-  if (exclusions.length === 0) {
-    message += '（なし）';
-  } else {
-    exclusions.forEach((file, index) => {
-      const date = file.date ? new Date(file.date).toLocaleDateString('ja-JP') : '日付不明';
-      message += `${index + 1}. ${file.filename} (追加日: ${date})\n`;
-    });
-  }
-  
-  message += '\n削除したいファイル番号をカンマ区切りで入力してください。\n例: 1,3,5\n全て削除する場合は「all」と入力してください。';
-  
-  const response = ui.prompt('除外リスト編集', message, ui.ButtonSet.OK_CANCEL);
-
-  if (response.getSelectedButton() === ui.Button.OK) {
-    const input = response.getResponseText().trim();
-    if (input === '') {
-      return;
-    }
-    
-    if (input.toLowerCase() === 'all') {
-      exclusions = [];
-      ui.alert('完了', `${companyName}の除外リストを全てクリアしました。`, ui.ButtonSet.OK);
-    } else {
-      const indices = input.split(',').map(s => parseInt(s.trim()) - 1).filter(i => !isNaN(i) && i >= 0 && i < exclusions.length);
-      if (indices.length > 0) {
-        indices.sort((a, b) => b - a);
-        const removedFiles = [];
+  for (let row = 2; row <= lastRow; row++) {
+    for (let i = 0; i < Config.PLATFORM.USE_CHECKBOX_COLUMNS.length; i++) {
+      const checkboxCol = Config.PLATFORM.USE_CHECKBOX_COLUMNS[i];
+      const fileNameCol = checkboxCol - 2; // ファイル名はチェックボックスの2つ左
+      
+      try {
+        const checkboxCell = sheet.getRange(row, checkboxCol);
+        const fileNameCell = sheet.getRange(row, fileNameCol);
+        const isChecked = checkboxCell.getValue() === true;
         
-        indices.forEach(i => {
-          removedFiles.push(exclusions[i].filename);
-          exclusions.splice(i, 1);
-        });
-        ui.alert('完了', `以下のファイルを除外リストから削除しました:\n${removedFiles.join('\n')}`, ui.ButtonSet.OK);
+        // ファイル名の取得を安全に行う
+        let fileName = "";
+        try {
+          const richText = fileNameCell.getRichTextValue();
+          if (richText) {
+            fileName = richText.getText();
+          }
+        } catch (richTextError) {
+          // RichTextが無い場合は通常の値を取得
+          fileName = fileNameCell.getValue() || "";
+        }
+        
+        if (isChecked && fileName && fileName.trim() !== "") {
+          excludeFiles.push(fileName.trim());
+          Logger.log(`   Found checked file: ${fileName} at row ${row}, col ${checkboxCol}`);
+        }
+      } catch (e) {
+        // エラーは無視（空セルなど）
+        Logger.log(`   Error processing row ${row}, col ${checkboxCol}: ${e.message}`);
       }
     }
-    
-    const updatedJson = JSON.stringify({files: exclusions});
-    sheet.getRange(row, Config.EXCLUSION.EXCLUSIONS_COL).setValue(updatedJson);
-    sheet.getRange(row, Config.EXCLUSION.LAST_UPDATED_COL).setValue(new Date());
   }
+  
+  Logger.log(`[getExcludeFilesFromCheckboxes] Found ${excludeFiles.length} checked files to exclude`);
+  return excludeFiles;
 }
+
+
+// 除外リスト編集関数も削除（新仕様では不要）
 
 // =======================================================================
 // ベクトル化・UUID生成関連の関数 (元のコードを維持)

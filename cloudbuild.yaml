@@ -25,6 +25,7 @@ steps:
     - '--allow-unauthenticated'
     - '--service-account=marketing-automation@marketing-automation-461305.iam.gserviceaccount.com'
     - '--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCS_BUCKET_NAME=embedding_storage,COHERE_API_KEY=${_COHERE_API_KEY},VECTORIZE_JOB_NAME=cohere-rag-vectorize-job,GCP_REGION=${_DEPLOY_REGION}'
+    - '--memory=1Gi'
 
 # --- 2. 作業員 (vectorize-job) のビルド＆デプロイ ---
 - name: 'gcr.io/cloud-builders/docker'
