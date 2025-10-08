@@ -317,13 +317,14 @@ def main():
                 print("✅ No processable images found. Job finished successfully.")
                 return
         
-        # 既に処理済みのファイルをスキップ
+        # 既に処理済みのファイルをスキップ（フォルダパス + ファイル名で判定）
         original_count = len(files_to_process)
-        files_to_process = [f for f in files_to_process if f['name'] not in processed_files]
+        processed_file_keys = {f"{item.get('folder_path', '')}/{item.get('filename', '')}" for item in existing_embeddings}
+        files_to_process = [f for f in files_to_process if f"{f.get('folder_path', '')}/{f['name']}" not in processed_file_keys]
         skipped_count = original_count - len(files_to_process)
         
         if not files_to_process:
-            print(f"✅ All {skipped_count} images already processed (found {original_count} total, {len(processed_files)} in existing data). Job finished successfully.")
+            print(f"✅ All {skipped_count} images already processed (found {original_count} total, {len(existing_embeddings)} in existing data). Job finished successfully.")
             return
 
         print(f"Found {len(files_to_process)} new images to process (skipping {skipped_count} already processed)")
@@ -381,7 +382,7 @@ def main():
                         "embedding": embedding.tolist()
                     }
                     all_embeddings.append(result_data)
-                    processed_files.add(file_info['name'])
+                    processed_files.add(f"{file_info.get('folder_path', '')}/{file_info['name']}")
                     
                     # 定期的なチェックポイント保存（100件ごと）
                     if len(all_embeddings) % 100 == 0 and len(all_embeddings) > 0:
