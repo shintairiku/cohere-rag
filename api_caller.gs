@@ -191,12 +191,19 @@ function performSearch(sheet, row, triggerValue) {
  */
 function callSearchApi(uuid, query, trigger, excludeFiles) {
   const apiUrl = `${Config.API_BASE_URL}/search`;
+  
+  // 検索シート名でembed-v4.0使用の判定
+  const activeSheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = activeSheet.getName();
+  const useEmbedV4 = sheetName.includes("embed-v4.0");
+  
   const payload = {
     "uuid": uuid,
     "q": query || "",
     "top_k": 5,
     "trigger": trigger,
-    "exclude_files": excludeFiles || []
+    "exclude_files": excludeFiles || [],
+    "use_embed_v4": useEmbedV4
   };
   Logger.log(`[callSearchApi] URL: ${apiUrl}`);
   Logger.log(`[callSearchApi] Payload: ${JSON.stringify(payload)}`);
@@ -461,7 +468,15 @@ function callVectorizeApi() {
 
     if (!uuid || !driveUrl) throw new Error("UUIDまたはGoogleドライブのURLが空です。");
 
-    const payload = JSON.stringify({ "uuid": uuid, "drive_url": driveUrl });
+    // 会社名でembed-v4.0使用の判定
+    const companyName = rowData[Config.COMPANY_LIST.NAME_COL - 1];
+    const useEmbedV4 = companyName && companyName.includes("embed-v4.0");
+
+    const payload = JSON.stringify({ 
+      "uuid": uuid, 
+      "drive_url": driveUrl,
+      "use_embed_v4": useEmbedV4
+    });
     const params = {
       method: "post",
       contentType: "application/json",
@@ -539,7 +554,14 @@ function vectorizePriorityCompanies() {
     SpreadsheetApp.getActiveSpreadsheet().toast(`処理中... (${i + 1}/${companiesToVectorize.length}): ${company.name}`, "処理中", -1);
     
     try {
-      const payload = JSON.stringify({ "uuid": company.uuid, "drive_url": company.driveUrl });
+      // 会社名でembed-v4.0使用の判定
+      const useEmbedV4 = company.name && company.name.includes("embed-v4.0");
+      
+      const payload = JSON.stringify({ 
+        "uuid": company.uuid, 
+        "drive_url": company.driveUrl,
+        "use_embed_v4": useEmbedV4
+      });
       const params = {
         method: "post",
         contentType: "application/json",

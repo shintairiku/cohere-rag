@@ -60,6 +60,7 @@ class VectorizeRequest(BaseModel):
     """Request model for vectorization endpoint."""
     uuid: str
     drive_url: str
+    use_embed_v4: bool = False
 
 
 class SearchRequest(BaseModel):
@@ -69,6 +70,7 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     trigger: str = "類似画像検索"
     exclude_files: List[str] = []
+    use_embed_v4: bool = False
 
 
 class JobService:
@@ -78,13 +80,14 @@ class JobService:
         self.config = config
         self.run_client = run_client
     
-    def trigger_vectorization_job(self, uuid: str, drive_url: str) -> Dict:
+    def trigger_vectorization_job(self, uuid: str, drive_url: str, use_embed_v4: bool = False) -> Dict:
         """
         Trigger a Cloud Run Job for vectorization.
         
         Args:
             uuid: Company UUID
             drive_url: Google Drive folder URL
+            use_embed_v4: Whether to use embed-v4.0 model
             
         Returns:
             Dict with job execution information
@@ -107,7 +110,8 @@ class JobService:
                         run_v2.RunJobRequest.Overrides.ContainerOverride(
                             env=[
                                 {"name": "UUID", "value": uuid},
-                                {"name": "DRIVE_URL", "value": drive_url}
+                                {"name": "DRIVE_URL", "value": drive_url},
+                                {"name": "USE_EMBED_V4", "value": str(use_embed_v4)}
                             ]
                         )
                     ]
@@ -146,7 +150,7 @@ job_service = JobService(config, run_client)
 async def trigger_vectorization_job(request: VectorizeRequest):
     """Triggers a Cloud Run Job to perform vectorization."""
     try:
-        result = job_service.trigger_vectorization_job(request.uuid, request.drive_url)
+        result = job_service.trigger_vectorization_job(request.uuid, request.drive_url, request.use_embed_v4)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -159,7 +163,7 @@ class SearchService:
         self.config = config
         self.cohere_client = cohere_client
     
-    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None) -> Dict:
+    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
         """
         Search for similar images using text query.
         
@@ -168,6 +172,7 @@ class SearchService:
             query: Search query text
             top_k: Number of results to return
             exclude_files: List of filenames to exclude from search results
+            use_embed_v4: Whether to use embed-v4.0 model
             
         Returns:
             Dict with search results
@@ -182,10 +187,12 @@ class SearchService:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
+        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
+        print(f"🔧 Using embedding model: {embed_model}")
+        
         response = self.cohere_client.embed(
             texts=[query], 
-            model="embed-multilingual-v3.0", 
-            # model="embed-v4.0",
+            model=embed_model,
             input_type="search_query"
         )
         query_embedding = response.embeddings[0]
@@ -283,7 +290,8 @@ def search_images_post(request: SearchRequest):
                 request.uuid, 
                 request.q, 
                 request.top_k,
-                request.exclude_files
+                request.exclude_files,
+                request.use_embed_v4
             )
             return result.get("results", [])
             

@@ -30,6 +30,8 @@ UUID = os.getenv("UUID")
 DRIVE_URL = os.getenv("DRIVE_URL")
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+ # Cloud RunジョブでGoogleスプレッドシートから受け取ったembed-v4.0使用フラグ
+USE_EMBED_V4 = os.getenv("USE_EMBED_V4", "false").lower() == "true"
 MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
 # CHECKPOINT_INTERVAL は削除（エラー時のみ保存するため不要）
 
@@ -154,6 +156,9 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
 def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
+        # 使用するモデルを決定
+        embed_model = "embed-v4.0" if USE_EMBED_V4 else "embed-multilingual-v3.0"
+        print(f"    🔧 Using embedding model: {embed_model}")
         # デバッグ: メモリエラーシミュレーション
         if DEBUG_MODE and SIMULATE_MEMORY_ERROR_AT > 0 and file_index == SIMULATE_MEMORY_ERROR_AT:
             print(f"🧪 [DEBUG] Simulating memory error at file #{file_index}")
@@ -167,15 +172,15 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
         # デバッグ: APIコストを削減するため、ダミーベクトルを返す
         if DEBUG_MODE:
             print(f"🧪 [DEBUG] Returning dummy embedding for '{filename}' (saves API cost)")
-            # 1024次元のダミーベクトル（embed-multilingual-v3.0と同じ次元）
-            dummy_vec = np.random.normal(0, 1, 1024)
+            # モデルに応じた次元数のダミーベクトル
+            dimensions = 1024 if embed_model == "embed-multilingual-v3.0" else 1024  # embed-v4.0も1024次元
+            dummy_vec = np.random.normal(0, 1, dimensions)
             dummy_vec = dummy_vec / np.linalg.norm(dummy_vec)  # 正規化
             return dummy_vec
         # 1. ファイル名をtextとしてベクトル化
         text_response = co_client.embed(
             texts=[filename],
-            model="embed-multilingual-v3.0",
-            # model="embed-v4.0",
+            model=embed_model,
             input_type="search_document"
         )
         text_vec = np.array(text_response.embeddings[0])
@@ -198,8 +203,7 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
         
         image_response = co_client.embed(
             images=[data_uri],
-            model="embed-multilingual-v3.0",
-            # model="embed-v4.0",
+            model=embed_model,
             input_type="image"
         )
         image_vec = np.array(image_response.embeddings[0])
@@ -291,6 +295,7 @@ def main():
     print("===================================================")
     print(f"  Starting Vectorization Job for UUID: {UUID}")
     print(f"  Target Drive URL: {DRIVE_URL}")
+    print(f"  Using Embed Model: {'embed-v4.0' if USE_EMBED_V4 else 'embed-multilingual-v3.0'}")
     print(f"  Checkpoint Mode: Save on error only")
     print("===================================================")
 
