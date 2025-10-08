@@ -11,6 +11,8 @@ import traceback
 from typing import Dict, Optional, List
 
 import cohere
+import gspread
+from google.oauth2 import service_account
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
@@ -30,6 +32,8 @@ class Config:
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.vectorize_job_name = os.getenv("VECTORIZE_JOB_NAME", "cohere-rag-vectorize-job")
         self.gcp_region = os.getenv("GCP_REGION", "asia-northeast1")
+        self.google_sheets_id = "1DEGQefuNWfivae9VfyNLjhrhVaSy9JwWWdI7Gx3M26s"
+        self.company_sheet_name = "企業一覧"
         
         self._validate_required_vars()
     
@@ -231,6 +235,174 @@ class SearchService:
 
 # Initialize services
 search_service = SearchService(config, cohere_client)
+
+
+class SheetsService:
+    """Service for managing Google Sheets operations."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self._gc = self._get_sheets_client()
+    
+    def _get_sheets_client(self) -> gspread.Client:
+        """Initialize Google Sheets client with appropriate credentials."""
+        environment = os.getenv("ENVIRONMENT", "local")
+        
+        if environment == "production":
+            import google.auth
+            credentials, _ = google.auth.default(scopes=[
+                'https://www.googleapis.com/auth/spreadsheets.readonly',
+                'https://www.googleapis.com/auth/drive.readonly'
+            ])
+            return gspread.authorize(credentials)
+        else:
+            key_file = "config/marketing-automation-461305-2acf4965e0b0.json"
+            if os.path.exists(key_file):
+                credentials = service_account.Credentials.from_service_account_file(
+                    key_file,
+                    scopes=[
+                        'https://www.googleapis.com/auth/spreadsheets.readonly',
+                        'https://www.googleapis.com/auth/drive.readonly'
+                    ]
+                )
+                return gspread.authorize(credentials)
+            else:
+                import google.auth
+                credentials, _ = google.auth.default(scopes=[
+                    'https://www.googleapis.com/auth/spreadsheets.readonly',
+                    'https://www.googleapis.com/auth/drive.readonly'
+                ])
+                return gspread.authorize(credentials)
+    
+    def get_companies_for_auto_update(self) -> List[Dict]:
+        """
+        Fetch companies that have both URL and checkbox=TRUE from Google Sheets.
+        
+        Returns:
+            List of dictionaries with company information
+        """
+        try:
+            spreadsheet = self._gc.open_by_key(self.config.google_sheets_id)
+            sheet = spreadsheet.worksheet(self.config.company_sheet_name)
+            
+            # Get all values from the sheet
+            all_values = sheet.get_all_values()
+            
+            if len(all_values) < 2:  # No data rows
+                print("No data found in the company sheet")
+                return []
+            
+            data_rows = all_values[1:]
+            
+            companies_to_update = []
+            
+            for row_index, row in enumerate(data_rows, start=2):  # Start from row 2 (skip header)
+                try:
+                    # Assuming columns: A=UUID, B=Company Name, C=Drive URL, F=Checkbox
+                    if len(row) < 6:
+                        continue
+                    
+                    uuid = row[0].strip() if len(row) > 0 else ""
+                    company_name = row[1].strip() if len(row) > 1 else ""
+                    drive_url = row[2].strip() if len(row) > 2 else ""
+                    checkbox_status = row[5].strip().upper() if len(row) > 5 else ""
+                    
+                    # Check if URL exists and checkbox is TRUE
+                    if drive_url and checkbox_status == "TRUE":
+                        companies_to_update.append({
+                            "uuid": uuid,
+                            "company_name": company_name,
+                            "drive_url": drive_url,
+                            "row_number": row_index,
+                            "use_embed_v4": "embed-v4.0" in company_name
+                        })
+                        print(f"Found company for auto-update: {company_name} (UUID: {uuid})")
+                
+                except Exception as e:
+                    print(f"Error processing row {row_index}: {e}")
+                    continue
+            
+            print(f"Total companies found for auto-update: {len(companies_to_update)}")
+            return companies_to_update
+            
+        except Exception as e:
+            print(f"Error fetching companies from Google Sheets: {e}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to fetch companies from Google Sheets: {str(e)}")
+
+
+# Initialize sheets service
+sheets_service = SheetsService(config)
+
+
+@app.post("/auto-update")
+async def auto_update_vectors():
+    """
+    Endpoint for automatic vector file updates.
+    Fetches companies with checkbox=TRUE from Google Sheets and triggers vectorization.
+    """
+    try:
+        print("🔄 Starting automatic vector update process...")
+        
+        # Get companies that need to be updated
+        companies = sheets_service.get_companies_for_auto_update()
+        
+        if not companies:
+            return {
+                "message": "No companies found with enabled auto-update",
+                "processed_count": 0,
+                "results": []
+            }
+        
+        results = []
+        success_count = 0
+        failure_count = 0
+        
+        for company in companies:
+            try:
+                print(f"🎯 Processing company: {company['company_name']} (UUID: {company['uuid']})")
+                
+                # Trigger vectorization job for this company
+                result = job_service.trigger_vectorization_job(
+                    uuid=company['uuid'],
+                    drive_url=company['drive_url'],
+                    use_embed_v4=company['use_embed_v4']
+                )
+                
+                results.append({
+                    "company_name": company['company_name'],
+                    "uuid": company['uuid'],
+                    "status": "success",
+                    "message": result['message']
+                })
+                success_count += 1
+                
+            except Exception as e:
+                error_msg = f"Failed to process {company['company_name']}: {str(e)}"
+                print(f"❌ {error_msg}")
+                
+                results.append({
+                    "company_name": company['company_name'],
+                    "uuid": company['uuid'],
+                    "status": "error",
+                    "message": error_msg
+                })
+                failure_count += 1
+        
+        print(f"✅ Auto-update process completed. Success: {success_count}, Failures: {failure_count}")
+        
+        return {
+            "message": f"Auto-update process completed. {success_count} successful, {failure_count} failed.",
+            "processed_count": len(companies),
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in auto-update process: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Auto-update process failed: {str(e)}")
 
 
 @app.get("/search", response_model=Dict)
