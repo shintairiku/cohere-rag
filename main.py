@@ -33,7 +33,7 @@ class Config:
         self.vectorize_job_name = os.getenv("VECTORIZE_JOB_NAME", "cohere-rag-vectorize-job")
         self.gcp_region = os.getenv("GCP_REGION", "asia-northeast1")
         self.google_sheets_id = "1DEGQefuNWfivae9VfyNLjhrhVaSy9JwWWdI7Gx3M26s"
-        self.company_sheet_name = "企業一覧"
+        self.company_sheet_name = "会社一覧"
         
         self._validate_required_vars()
     
