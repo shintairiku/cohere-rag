@@ -7,6 +7,7 @@ import hashlib
 import gc  # ガベージコレクション用
 import signal  # シグナルハンドリング用
 import sys
+import time
 from datetime import datetime
 
 import cohere
@@ -26,12 +27,25 @@ from drive_scanner import list_files_in_drive_folder # drive_scanner.pyを再利
 load_dotenv()
 
 # --- 1. 環境変数の読み込みと検証 ---
-UUID = os.getenv("UUID")
-DRIVE_URL = os.getenv("DRIVE_URL")
+# バッチモード判定
+BATCH_MODE = os.getenv("BATCH_MODE", "false").lower() == "true"
+
+if BATCH_MODE:
+    # バッチモードの場合、環境変数からタスクリストを取得
+    BATCH_TASKS_JSON = os.getenv("BATCH_TASKS", "[]")
+    try:
+        BATCH_TASKS = json.loads(BATCH_TASKS_JSON)
+    except json.JSONDecodeError:
+        raise RuntimeError("FATAL: Invalid BATCH_TASKS JSON format")
+else:
+    # 単一モードの場合、従来通り
+    UUID = os.getenv("UUID")
+    DRIVE_URL = os.getenv("DRIVE_URL")
+    # Cloud RunジョブでGoogleスプレッドシートから受け取ったembed-v4.0使用フラグ
+    USE_EMBED_V4 = os.getenv("USE_EMBED_V4", "false").lower() == "true"
+
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
- # Cloud RunジョブでGoogleスプレッドシートから受け取ったembed-v4.0使用フラグ
-USE_EMBED_V4 = os.getenv("USE_EMBED_V4", "false").lower() == "true"
 MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
 # CHECKPOINT_INTERVAL は削除（エラー時のみ保存するため不要）
 
@@ -40,12 +54,22 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 SIMULATE_MEMORY_ERROR_AT = int(os.getenv("SIMULATE_MEMORY_ERROR_AT", "0"))  # 指定した画像番号でメモリエラーをシミュレート
 SIMULATE_PROCESSING_ERROR_AT = int(os.getenv("SIMULATE_PROCESSING_ERROR_AT", "0"))  # 指定した画像番号で処理エラーをシミュレート
 
-if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
-    missing = [
-        var for var in ['GCS_BUCKET_NAME', 'COHERE_API_KEY', 'UUID', 'DRIVE_URL']
-        if not os.getenv(var)
-    ]
-    raise RuntimeError(f"FATAL: Required environment variables are missing: {', '.join(missing)}")
+if BATCH_MODE:
+    if not all([GCS_BUCKET_NAME, COHERE_API_KEY]):
+        missing = [
+            var for var in ['GCS_BUCKET_NAME', 'COHERE_API_KEY']
+            if not os.getenv(var)
+        ]
+        raise RuntimeError(f"FATAL: Required environment variables are missing: {', '.join(missing)}")
+    if not BATCH_TASKS:
+        raise RuntimeError("FATAL: No tasks provided in batch mode")
+else:
+    if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
+        missing = [
+            var for var in ['GCS_BUCKET_NAME', 'COHERE_API_KEY', 'UUID', 'DRIVE_URL']
+            if not os.getenv(var)
+        ]
+        raise RuntimeError(f"FATAL: Required environment variables are missing: {', '.join(missing)}")
 
 # --- 2. グローバルクライアントの初期化 ---
 co_client = cohere.Client(COHERE_API_KEY)
@@ -153,11 +177,11 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         traceback.print_exc()
         return None
 
-def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0) -> np.ndarray:
+def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0, use_embed_v4: bool = False) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
         # 使用するモデルを決定
-        embed_model = "embed-v4.0" if USE_EMBED_V4 else "embed-multilingual-v3.0"
+        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
         print(f"    🔧 Using embedding model: {embed_model}")
         # デバッグ: メモリエラーシミュレーション
         if DEBUG_MODE and SIMULATE_MEMORY_ERROR_AT > 0 and file_index == SIMULATE_MEMORY_ERROR_AT:
@@ -272,62 +296,44 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
         print(f"❌ Failed to save checkpoint: {e}")
         traceback.print_exc()
 
-def main():
-    """Cloud Runジョブとして実行されるメイン関数"""
-    all_embeddings = []  # グローバルに参照できるように最初に初期化
+def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, all_embeddings: list = None) -> list:
+    """単一UUIDの処理"""
+    if all_embeddings is None:
+        all_embeddings = []
     
-    # シグナルハンドラーの設定
-    def signal_handler(signum, frame):
-        """シグナル受信時の処理"""
-        print(f"\n⚠️  Signal {signum} received. Attempting to save current progress...")
-        if all_embeddings:
-            try:
-                save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
-                print(f"✅ Emergency save successful: {len(all_embeddings)} embeddings saved")
-            except Exception as e:
-                print(f"❌ Emergency save failed: {e}")
-        sys.exit(1)
+    print(f"📋 Processing UUID: {uuid}")
+    print(f"   Drive URL: {drive_url}")
+    print(f"   Using Embed Model: {'embed-v4.0' if use_embed_v4 else 'embed-multilingual-v3.0'}")
     
-    # SIGTERM（Cloud Runからの終了シグナル）とSIGINT（Ctrl+C）を捕捉
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    print("===================================================")
-    print(f"  Starting Vectorization Job for UUID: {UUID}")
-    print(f"  Target Drive URL: {DRIVE_URL}")
-    print(f"  Using Embed Model: {'embed-v4.0' if USE_EMBED_V4 else 'embed-multilingual-v3.0'}")
-    print(f"  Checkpoint Mode: Save on error only")
-    print("===================================================")
-
     try:
         # 既存のembeddingsを読み込む
-        existing_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, UUID)
-        all_embeddings = existing_embeddings  # 読み込んだデータで初期化
+        existing_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, uuid)
+        task_embeddings = existing_embeddings.copy()
         
         if DEBUG_MODE:
             # デバッグモードではダミーのファイルリストを使用
             files_to_process = [
-                {'name': 'debug_image_1.jpg', 'id': 'debug_id_1', 'webViewLink': 'https://debug.example.com/1', 'folder_path': '/debug'},
-                {'name': 'debug_image_2.png', 'id': 'debug_id_2', 'webViewLink': 'https://debug.example.com/2', 'folder_path': '/debug'}
+                {'name': f'debug_image_{uuid}_1.jpg', 'id': 'debug_id_1', 'webViewLink': f'https://debug.example.com/{uuid}_1', 'folder_path': '/debug'},
+                {'name': f'debug_image_{uuid}_2.png', 'id': 'debug_id_2', 'webViewLink': f'https://debug.example.com/{uuid}_2', 'folder_path': '/debug'}
             ]
-            print(f"🧪 [DEBUG] Using {len(files_to_process)} dummy files for testing")
+            print(f"🧪 [DEBUG] Using {len(files_to_process)} dummy files for UUID {uuid}")
         else:
-            files_to_process = list_files_in_drive_folder(DRIVE_URL)
+            files_to_process = list_files_in_drive_folder(drive_url)
             if not files_to_process:
-                print("✅ No processable images found. Job finished successfully.")
-                return
+                print(f"✅ No processable images found for UUID {uuid}")
+                return task_embeddings
         
-        # 既に処理済みのファイルをスキップ（フォルダパス + ファイル名で判定）
+        # 既に処理済みのファイルをスキップ
         original_count = len(files_to_process)
         processed_file_keys = {f"{item.get('folder_path', '')}/{item.get('filename', '')}" for item in existing_embeddings}
         files_to_process = [f for f in files_to_process if f"{f.get('folder_path', '')}/{f['name']}" not in processed_file_keys]
         skipped_count = original_count - len(files_to_process)
         
         if not files_to_process:
-            print(f"✅ All {skipped_count} images already processed (found {original_count} total, {len(existing_embeddings)} in existing data). Job finished successfully.")
-            return
+            print(f"✅ All {skipped_count} images already processed for UUID {uuid}")
+            return task_embeddings
 
-        print(f"Found {len(files_to_process)} new images to process (skipping {skipped_count} already processed)")
+        print(f"Found {len(files_to_process)} new images to process for UUID {uuid} (skipping {skipped_count} already processed)")
         
         if not DEBUG_MODE:
             print("Initializing Google Drive service...")
@@ -340,18 +346,13 @@ def main():
         # 処理開始時刻を記録
         start_time = datetime.now()
         
-        # 進捗表示用の固定値を計算
-        total_files = len(files_to_process) + len(processed_files)
-        initial_processed_count = len(processed_files)
-
         for i, file_info in enumerate(files_to_process, 1):
-            current_index = initial_processed_count + i
-            print(f"  ({current_index}/{total_files}) Processing: {file_info['name'][:50]}...")
+            print(f"    ({i}/{len(files_to_process)}) Processing: {file_info['name'][:50]}...")
             
             try:
                 if DEBUG_MODE:
                     # デバッグモードではPILでダミー画像を生成
-                    print("    🧪 [DEBUG] Using dummy image data (skipping actual download)")
+                    print("      🧪 [DEBUG] Using dummy image data (skipping actual download)")
                     dummy_img = Image.new('RGB', (100, 100), color='red')
                     output = io.BytesIO()
                     dummy_img.save(output, format='JPEG')
@@ -369,11 +370,11 @@ def main():
                 # 2. Resize if necessary
                 resized_content = resize_image_if_needed(image_content, file_info['name'])
                 if resized_content is None:
-                    print(f"    ⏭️  Skipping due to resize failure")
+                    print(f"      ⏭️  Skipping due to resize failure")
                     continue
 
                 # 3. Get multimodal embedding
-                embedding = get_multimodal_embedding(resized_content, file_info['name'], current_index)
+                embedding = get_multimodal_embedding(resized_content, file_info['name'], i, use_embed_v4)
                 if embedding is not None:
                     result_data = {
                         "filename": file_info['name'],
@@ -381,62 +382,106 @@ def main():
                         "folder_path": file_info['folder_path'],
                         "embedding": embedding.tolist()
                     }
-                    all_embeddings.append(result_data)
-                    processed_files.add(f"{file_info.get('folder_path', '')}/{file_info['name']}")
+                    task_embeddings.append(result_data)
                     
-                    # 定期的なチェックポイント保存（100件ごと）
-                    if len(all_embeddings) % 100 == 0 and len(all_embeddings) > 0:
-                        elapsed = (datetime.now() - start_time).total_seconds()
-                        print(f"\n⏱️  Elapsed time: {elapsed:.1f} seconds")
-                        print(f"📊 Progress: {len(all_embeddings)} embeddings generated")
-                        
-                        # チェックポイント保存（OOM対策）
-                        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
-                        
-                        # メモリ解放
-                        gc.collect()
-                        print(f"🧹 Memory cleanup performed\n")
+                    # API制限対策：画像処理の間隔を空ける（現在は無効化）
+                    # if not DEBUG_MODE and i < len(files_to_process):
+                    #     print(f"      ⏱️  Waiting 15 seconds before next API call...")
+                    #     time.sleep(15)  # 15秒待機（5回/分制限対策）
 
             except Exception as e:
-                print(f"    ❌ Error processing {file_info['name']}: {e}")
-                # エラーが発生したらチェックポイントを保存
-                if len(all_embeddings) > 0:
-                    print(f"    💾 Saving checkpoint after error (total: {len(all_embeddings)} embeddings)...")
-                    save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
+                print(f"      ❌ Error processing {file_info['name']}: {e}")
+                # 個別ファイルエラーは継続
+                continue
         
-        if not all_embeddings:
-            print("⚠️  No embeddings were generated. Check for previous warnings.")
-            return
-            
-        # 最終保存
-        elapsed_total = (datetime.now() - start_time).total_seconds()
-        print(f"\n⏱️  Total processing time: {elapsed_total:.1f} seconds")
-        print(f"📊 Final count: {len(all_embeddings)} embeddings")
+        # タスク完了後にファイルを保存
+        if task_embeddings != existing_embeddings:
+            elapsed_total = (datetime.now() - start_time).total_seconds()
+            print(f"   ⏱️  Processing time for UUID {uuid}: {elapsed_total:.1f} seconds")
+            save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=True)
+            print(f"   ✅ Saved {len(task_embeddings)} embeddings for UUID {uuid}")
         
-        save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=True)
+        return task_embeddings
         
-        print(f"✅ Successfully saved vector data to gs://{GCS_BUCKET_NAME}/{UUID}.json")
-        print("🎉 Job finished successfully.")
-
     except Exception as e:
-        error_type = type(e).__name__
-        print(f"❌ An unexpected error occurred during the job execution ({error_type}):")
-        if DEBUG_MODE:
-            print(f"🧪 [DEBUG] Error type: {error_type}")
-            if "memory" in str(e).lower() or isinstance(e, MemoryError):
-                print(f"🧪 [DEBUG] Memory error detected - this triggers the checkpoint save functionality")
+        print(f"   ❌ Error processing UUID {uuid}: {e}")
         traceback.print_exc()
-        
-        # エラー時も最後に保存を試みる
-        if 'all_embeddings' in locals() and all_embeddings:
-            print(f"\n💾 Attempting to save {len(all_embeddings)} embeddings before exit...")
+        # エラー時も保存を試みる
+        if task_embeddings:
             try:
-                save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
-                print(f"✅ Emergency save successful")
+                save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=False)
+                print(f"   💾 Emergency save for UUID {uuid}: {len(task_embeddings)} embeddings")
             except Exception as save_error:
-                print(f"❌ Emergency save failed: {save_error}")
-        
+                print(f"   ❌ Emergency save failed for UUID {uuid}: {save_error}")
         raise e
+
+
+def main():
+    """Cloud Runジョブとして実行されるメイン関数"""
+    if BATCH_MODE:
+        print("===================================================")
+        print(f"  Starting BATCH Vectorization Job")
+        print(f"  Number of tasks: {len(BATCH_TASKS)}")
+        print(f"  Checkpoint Mode: Save on error only")
+        print("===================================================")
+        
+        total_processed = 0
+        total_errors = 0
+        
+        for i, task in enumerate(BATCH_TASKS, 1):
+            uuid = task.get('uuid')
+            drive_url = task.get('drive_url')
+            company_name = task.get('company_name', '')
+            use_embed_v4 = task.get('use_embed_v4', False)
+            
+            print(f"\n📋 Task {i}/{len(BATCH_TASKS)}: {company_name} (UUID: {uuid})")
+            
+            try:
+                process_single_uuid(uuid, drive_url, use_embed_v4)
+                total_processed += 1
+                print(f"✅ Task {i} completed successfully")
+                
+                # タスク間の待機（API制限対策）（現在は無効化）
+                # if i < len(BATCH_TASKS):
+                #     print(f"⏱️  Waiting 30 seconds before next task...")
+                #     time.sleep(30)  # タスク間は30秒待機
+                    
+            except Exception as e:
+                print(f"❌ Task {i} failed: {e}")
+                total_errors += 1
+                # タスクが失敗しても次のタスクを継続
+                continue
+        
+        print(f"\n🎉 Batch job completed: {total_processed} successful, {total_errors} failed")
+    else:
+        # 単一モード（従来通り）
+        all_embeddings = []  # グローバルに参照できるように最初に初期化
+        
+        # シグナルハンドラーの設定
+        def signal_handler(signum, frame):
+            """シグナル受信時の処理"""
+            print(f"\n⚠️  Signal {signum} received. Attempting to save current progress...")
+            if all_embeddings:
+                try:
+                    save_checkpoint(GCS_BUCKET_NAME, UUID, all_embeddings, is_final=False)
+                    print(f"✅ Emergency save successful: {len(all_embeddings)} embeddings saved")
+                except Exception as e:
+                    print(f"❌ Emergency save failed: {e}")
+            sys.exit(1)
+        
+        # SIGTERM（Cloud Runからの終了シグナル）とSIGINT（Ctrl+C）を捕捉
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        
+        print("===================================================")
+        print(f"  Starting Vectorization Job for UUID: {UUID}")
+        print(f"  Target Drive URL: {DRIVE_URL}")
+        print(f"  Using Embed Model: {'embed-v4.0' if USE_EMBED_V4 else 'embed-multilingual-v3.0'}")
+        print(f"  Checkpoint Mode: Save on error only")
+        print("===================================================")
+        
+        all_embeddings = process_single_uuid(UUID, DRIVE_URL, USE_EMBED_V4)
+        print("🎉 Single job finished successfully.")
 
 if __name__ == "__main__":
     main()

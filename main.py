@@ -67,6 +67,19 @@ class VectorizeRequest(BaseModel):
     use_embed_v4: bool = False
 
 
+class VectorizeTask(BaseModel):
+    """Single vectorization task model."""
+    uuid: str
+    drive_url: str
+    company_name: str = ""
+    use_embed_v4: bool = False
+
+
+class BatchVectorizeRequest(BaseModel):
+    """Request model for batch vectorization endpoint."""
+    tasks: List[VectorizeTask]
+
+
 class SearchRequest(BaseModel):
     """Request model for search endpoint."""
     uuid: str
@@ -86,7 +99,7 @@ class JobService:
     
     def trigger_vectorization_job(self, uuid: str, drive_url: str, use_embed_v4: bool = False) -> Dict:
         """
-        Trigger a Cloud Run Job for vectorization.
+        Trigger a Cloud Run Job for single UUID vectorization.
         
         Args:
             uuid: Company UUID
@@ -145,6 +158,69 @@ class JobService:
             traceback.print_exc()
             raise Exception(error_msg)
 
+    def trigger_batch_vectorization_job(self, tasks: List[VectorizeTask]) -> Dict:
+        """
+        Trigger a Cloud Run Job for batch vectorization of multiple UUIDs.
+        
+        Args:
+            tasks: List of vectorization tasks
+            
+        Returns:
+            Dict with job execution information
+            
+        Raises:
+            Exception: If job execution fails
+        """
+        print(f"API: Received request to start batch vectorization job for {len(tasks)} tasks")
+        
+        job_parent = f"projects/{self.config.gcp_project_id}/locations/{self.config.gcp_region}"
+        job_name = f"{job_parent}/jobs/{self.config.vectorize_job_name}"
+        
+        try:
+            print(f"  -> Attempting to run batch job: {job_name}")
+            
+            # Serialize tasks to JSON for passing as environment variable
+            import json
+            tasks_json = json.dumps([task.dict() for task in tasks])
+            
+            request_object = run_v2.RunJobRequest(
+                name=job_name,
+                overrides=run_v2.RunJobRequest.Overrides(
+                    container_overrides=[
+                        run_v2.RunJobRequest.Overrides.ContainerOverride(
+                            env=[
+                                {"name": "BATCH_MODE", "value": "true"},
+                                {"name": "BATCH_TASKS", "value": tasks_json}
+                            ]
+                        )
+                    ]
+                )
+            )
+            
+            response = self.run_client.run_job(request=request_object)
+            
+            # Extract execution info from response
+            if hasattr(response, 'name'):
+                execution_info = response.name
+            elif hasattr(response, 'metadata'):
+                execution_info = str(response.metadata)
+            else:
+                execution_info = f"Batch job triggered for {len(tasks)} tasks"
+            
+            print(f"  -> Batch job execution started. Info: {execution_info}")
+            return {
+                "message": f"Batch vectorization job started successfully for {len(tasks)} tasks",
+                "execution_info": execution_info,
+                "job_name": self.config.vectorize_job_name,
+                "task_count": len(tasks)
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to start batch Cloud Run Job: {str(e)}"
+            print(f"  -> ERROR: {error_msg}")
+            traceback.print_exc()
+            raise Exception(error_msg)
+
 
 # Initialize services
 job_service = JobService(config, run_client)
@@ -155,6 +231,16 @@ async def trigger_vectorization_job(request: VectorizeRequest):
     """Triggers a Cloud Run Job to perform vectorization."""
     try:
         result = job_service.trigger_vectorization_job(request.uuid, request.drive_url, request.use_embed_v4)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/vectorize-batch", status_code=202)
+async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
+    """Triggers a Cloud Run Job to perform batch vectorization."""
+    try:
+        result = job_service.trigger_batch_vectorization_job(request.tasks)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -358,36 +444,41 @@ async def auto_update_vectors():
         success_count = 0
         failure_count = 0
         
-        for company in companies:
-            try:
-                print(f"🎯 Processing company: {company['company_name']} (UUID: {company['uuid']})")
-                
-                # Trigger vectorization job for this company
-                result = job_service.trigger_vectorization_job(
+        # バッチジョブとして実行
+        try:
+            print(f"🎯 Triggering batch vectorization for {len(companies)} companies")
+            
+            # タスクリストを作成
+            tasks = []
+            for company in companies:
+                task = VectorizeTask(
                     uuid=company['uuid'],
                     drive_url=company['drive_url'],
+                    company_name=company['company_name'],
                     use_embed_v4=company['use_embed_v4']
                 )
-                
-                results.append({
-                    "company_name": company['company_name'],
-                    "uuid": company['uuid'],
-                    "status": "success",
-                    "message": result['message']
-                })
-                success_count += 1
-                
-            except Exception as e:
-                error_msg = f"Failed to process {company['company_name']}: {str(e)}"
-                print(f"❌ {error_msg}")
-                
-                results.append({
-                    "company_name": company['company_name'],
-                    "uuid": company['uuid'],
-                    "status": "error",
-                    "message": error_msg
-                })
-                failure_count += 1
+                tasks.append(task)
+            
+            # バッチジョブを実行
+            batch_result = job_service.trigger_batch_vectorization_job(tasks)
+            
+            results.append({
+                "status": "success",
+                "message": batch_result['message'],
+                "task_count": batch_result.get('task_count', len(companies)),
+                "execution_info": batch_result.get('execution_info', '')
+            })
+            success_count = len(companies)
+            
+        except Exception as e:
+            error_msg = f"Failed to trigger batch vectorization: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            results.append({
+                "status": "error",
+                "message": error_msg
+            })
+            failure_count = len(companies)
         
         print(f"✅ Auto-update process completed. Success: {success_count}, Failures: {failure_count}")
         
