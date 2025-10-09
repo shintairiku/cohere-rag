@@ -242,7 +242,8 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
         w = max(0, min(1, w))
         
         # 4. 重み付け統合ベクトルを計算
-        final_vec = w * text_vec + (1 - w) * image_vec
+        # final_vec = w * text_vec + (1 - w) * image_vec
+        final_vec = image_vec
         
         print(f"    📊 Text-Image similarity: {w:.3f} for '{filename}'")
         return final_vec
