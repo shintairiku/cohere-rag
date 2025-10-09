@@ -47,7 +47,7 @@ else:
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
-# CHECKPOINT_INTERVAL は削除（エラー時のみ保存するため不要）
+CHECKPOINT_INTERVAL = 100  # 100件ごとに途中保存
 
 # デバッグ用設定
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -280,6 +280,9 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
         return
         
     try:
+        from datetime import datetime
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(f"{uuid}.json")
         blob.upload_from_string(
@@ -288,12 +291,12 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
         )
         
         if is_final:
-            print(f"✅ Final save completed: {len(embeddings)} embeddings")
+            print(f"✅ [{current_time}] Final save completed: {len(embeddings)} embeddings saved to gs://{bucket_name}/{uuid}.json")
         else:
-            print(f"💾 Checkpoint saved: {len(embeddings)} embeddings to {uuid}.json")
+            print(f"💾 [{current_time}] Checkpoint saved: {len(embeddings)} embeddings saved to gs://{bucket_name}/{uuid}.json")
             
     except Exception as e:
-        print(f"❌ Failed to save checkpoint: {e}")
+        print(f"❌ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed to save checkpoint to gs://{bucket_name}/{uuid}.json: {e}")
         traceback.print_exc()
 
 def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, all_embeddings: list = None) -> list:
@@ -384,6 +387,12 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
                     }
                     task_embeddings.append(result_data)
                     
+                    # 100件ごとに途中保存を実行
+                    if i % CHECKPOINT_INTERVAL == 0:
+                        print(f"📌 Checkpoint reached: processed {i}/{len(files_to_process)} files")
+                        save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=False)
+                        print(f"💾 Checkpoint saved: {len(task_embeddings)} embeddings")
+                    
                     # API制限対策：画像処理の間隔を空ける（現在は無効化）
                     # if not DEBUG_MODE and i < len(files_to_process):
                     #     print(f"      ⏱️  Waiting 15 seconds before next API call...")
@@ -422,7 +431,7 @@ def main():
         print("===================================================")
         print(f"  Starting BATCH Vectorization Job")
         print(f"  Number of tasks: {len(BATCH_TASKS)}")
-        print(f"  Checkpoint Mode: Save on error only")
+        print(f"  Checkpoint Mode: Every {CHECKPOINT_INTERVAL} files + error handling")
         print("===================================================")
         
         total_processed = 0
