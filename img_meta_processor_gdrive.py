@@ -428,6 +428,24 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
 
 def main():
     """Cloud Runジョブとして実行されるメイン関数"""
+    
+    # 環境変数を表示
+    print("🔧 Environment Variables:")
+    env_vars = [
+        "GCS_BUCKET_NAME", "COHERE_API_KEY", "UUID", "DRIVE_URL", 
+        "USE_EMBED_V4", "BATCH_MODE", "BATCH_TASKS", "DEBUG_MODE"
+    ]
+    for var in env_vars:
+        value = os.getenv(var, "NOT_SET")
+        if var == "COHERE_API_KEY" and value != "NOT_SET":
+            # APIキーは最初の10文字のみ表示
+            value = f"{value[:10]}..." if len(value) > 10 else value
+        elif var == "BATCH_TASKS" and value != "NOT_SET":
+            # BATCH_TASKSは長いので長さのみ表示
+            value = f"[{len(value)} characters]" if value else "EMPTY"
+        print(f"  {var}: {value}")
+    print()
+    
     if BATCH_MODE:
         print("===================================================")
         print(f"  Starting BATCH Vectorization Job")
@@ -465,6 +483,14 @@ def main():
         print(f"\n🎉 Batch job completed: {total_processed} successful, {total_errors} failed")
     else:
         # 単一モード（従来通り）
+        print("===================================================")
+        print(f"  Starting SINGLE Vectorization Job")
+        print(f"  UUID: {UUID}")
+        print(f"  Drive URL: {DRIVE_URL}")
+        print(f"  Use Embed V4: {USE_EMBED_V4}")
+        print(f"  Checkpoint Mode: Every {CHECKPOINT_INTERVAL} files + error handling")
+        print("===================================================")
+        
         all_embeddings = []  # グローバルに参照できるように最初に初期化
         
         # シグナルハンドラーの設定

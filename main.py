@@ -128,7 +128,9 @@ class JobService:
                             env=[
                                 {"name": "UUID", "value": uuid},
                                 {"name": "DRIVE_URL", "value": drive_url},
-                                {"name": "USE_EMBED_V4", "value": str(use_embed_v4)}
+                                {"name": "USE_EMBED_V4", "value": str(use_embed_v4)},
+                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
+                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
                             ]
                         )
                     ]
@@ -190,7 +192,9 @@ class JobService:
                         run_v2.RunJobRequest.Overrides.ContainerOverride(
                             env=[
                                 {"name": "BATCH_MODE", "value": "true"},
-                                {"name": "BATCH_TASKS", "value": tasks_json}
+                                {"name": "BATCH_TASKS", "value": tasks_json},
+                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
+                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
                             ]
                         )
                     ]
