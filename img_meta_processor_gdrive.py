@@ -308,6 +308,7 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
     print(f"📋 Processing UUID: {uuid}")
     print(f"   Drive URL: {drive_url}")
     print(f"   Using Embed Model: {'embed-v4.0' if use_embed_v4 else 'embed-multilingual-v3.0'}")
+    print(f"🔍 Debug - Looking for file: gs://{GCS_BUCKET_NAME}/{uuid}.json")
     
     try:
         # 既存のembeddingsを読み込む
