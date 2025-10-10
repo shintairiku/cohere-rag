@@ -330,6 +330,12 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
         # 既に処理済みのファイルをスキップ
         original_count = len(files_to_process)
         processed_file_keys = {f"{item.get('folder_path', '')}/{item.get('filename', '')}" for item in existing_embeddings}
+        
+        # デバッグ情報を追加
+        print(f"🔍 Debug - Existing embeddings count: {len(existing_embeddings)}")
+        print(f"🔍 Debug - Processed file keys: {processed_file_keys}")
+        print(f"🔍 Debug - Files to process (before filter): {[f['name'] for f in files_to_process[:5]]}...")  # 最初の5件のみ表示
+        
         files_to_process = [f for f in files_to_process if f"{f.get('folder_path', '')}/{f['name']}" not in processed_file_keys]
         skipped_count = original_count - len(files_to_process)
         
