@@ -4,8 +4,8 @@ import json
 import traceback
 import base64
 import hashlib
-import gc  # ガベージコレクション用
-import signal  # シグナルハンドリング用
+import gc
+import signal
 import sys
 import time
 from datetime import datetime
@@ -22,37 +22,33 @@ Image.MAX_IMAGE_PIXELS = 500_000_000
 import google.auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from drive_scanner import list_files_in_drive_folder # drive_scanner.pyを再利用
+from drive_scanner import list_files_in_drive_folder
 
 load_dotenv()
 
 # --- 1. 環境変数の読み込みと検証 ---
-# バッチモード判定
 BATCH_MODE = os.getenv("BATCH_MODE", "false").lower() == "true"
 
 if BATCH_MODE:
-    # バッチモードの場合、環境変数からタスクリストを取得
     BATCH_TASKS_JSON = os.getenv("BATCH_TASKS", "[]")
     try:
         BATCH_TASKS = json.loads(BATCH_TASKS_JSON)
     except json.JSONDecodeError:
         raise RuntimeError("FATAL: Invalid BATCH_TASKS JSON format")
 else:
-    # 単一モードの場合、従来通り
     UUID = os.getenv("UUID")
     DRIVE_URL = os.getenv("DRIVE_URL")
-    # Cloud RunジョブでGoogleスプレッドシートから受け取ったembed-v4.0使用フラグ
     USE_EMBED_V4 = os.getenv("USE_EMBED_V4", "false").lower() == "true"
 
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-MAX_IMAGE_SIZE_MB = 5  # Cohere API制限: 最大5MB
-CHECKPOINT_INTERVAL = 100  # 100件ごとに途中保存
+MAX_IMAGE_SIZE_MB = 5
+CHECKPOINT_INTERVAL = 100
 
 # デバッグ用設定
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
-SIMULATE_MEMORY_ERROR_AT = int(os.getenv("SIMULATE_MEMORY_ERROR_AT", "0"))  # 指定した画像番号でメモリエラーをシミュレート
-SIMULATE_PROCESSING_ERROR_AT = int(os.getenv("SIMULATE_PROCESSING_ERROR_AT", "0"))  # 指定した画像番号で処理エラーをシミュレート
+SIMULATE_MEMORY_ERROR_AT = int(os.getenv("SIMULATE_MEMORY_ERROR_AT", "0"))
+SIMULATE_PROCESSING_ERROR_AT = int(os.getenv("SIMULATE_PROCESSING_ERROR_AT", "0"))
 
 if BATCH_MODE:
     if not all([GCS_BUCKET_NAME, COHERE_API_KEY]):
@@ -74,7 +70,6 @@ else:
 # --- 2. グローバルクライアントの初期化 ---
 co_client = cohere.Client(COHERE_API_KEY)
 
-# デバッグモードでは Google Cloud Storage クライアントを初期化しない
 if not DEBUG_MODE:
     storage_client = storage.Client()
 else:
@@ -86,15 +81,11 @@ MAX_FILE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
     """
     画像の解像度がCohere API制限を超える場合、ピクセル数ベースでリサイズする。
-    Cohere APIは解像度ベースで制限を行うため、ファイルサイズではなくピクセル数で判定。
     """
     try:
-        # まず画像として読み込めるか検証
         try:
             img = Image.open(io.BytesIO(image_content))
-            # 画像を読み込んで基本情報を確認（実際にピクセルデータを読み込む）
             img.verify()
-            # verifyは画像を閉じるので、再度開く
             img = Image.open(io.BytesIO(image_content))
         except Image.DecompressionBombError as e:
             print(f"    ⚠️  Decompression bomb warning for '{filename}': {e}")
@@ -112,33 +103,25 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         original_pixels = original_width * original_height
         original_size_mb = len(image_content) / (1024 * 1024)
         
-        # 極端に大きい画像の場合は警告を出してスキップ
-        if original_pixels > 100_000_000:  # 100MP以上
+        if original_pixels > 100_000_000:
             print(f"    ⚠️  Extremely large image: {original_width}x{original_height} ({original_pixels:,} pixels)")
             print(f"       This image is too large to process safely. Skipping...")
             return None
         
-        # Cohere API embed-v4.0の解像度制限: 約240万ピクセル
-        # 安全マージンを考慮して2.3MP (2,300,000ピクセル) を上限とする
         MAX_PIXELS = 2_300_000
         
-        # 解像度チェック
         if original_pixels <= MAX_PIXELS:
             return image_content
         
         print(f"    📏 High resolution image detected: {original_width}x{original_height} ({original_pixels:,} pixels > {MAX_PIXELS:,} limit)")
         print(f"       File size: {original_size_mb:.1f}MB")
         
-        # RGBAやPモードの画像をRGBに変換
         if img.mode in ('RGBA', 'LA', 'P'):
             background = Image.new('RGB', img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[-1] if 'A' in img.mode else None)
             img = background
 
-        # 必要なスケールファクターを計算（ピクセル数ベース）
-        scale_factor = (MAX_PIXELS / original_pixels) ** 0.5  # 面積比の平方根
-        
-        # 最小でも0.3倍までしかスケールダウンしない（品質保持のため）
+        scale_factor = (MAX_PIXELS / original_pixels) ** 0.5
         scale_factor = max(0.3, scale_factor)
         
         new_width = int(original_width * scale_factor)
@@ -148,16 +131,13 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         print(f"    🔢 Calculated scale factor: {scale_factor:.3f}")
         print(f"       New resolution: {new_width}x{new_height} ({new_pixels:,} pixels)")
         
-        # リサイズ実行
         resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # 品質90で保存
         output = io.BytesIO()
         resized_img.save(output, format='JPEG', quality=90, optimize=True)
         resized_data = output.getvalue()
         resized_size_mb = len(resized_data) / (1024 * 1024)
         
-        # ファイルサイズも5MBを超えた場合は品質を下げる
         quality = 90
         while len(resized_data) > MAX_FILE_SIZE_BYTES and quality >= 60:
             quality -= 10
@@ -180,28 +160,24 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
 def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0, use_embed_v4: bool = False) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
-        # 使用するモデルを決定
         embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
         print(f"    🔧 Using embedding model: {embed_model}")
-        # デバッグ: メモリエラーシミュレーション
+        
         if DEBUG_MODE and SIMULATE_MEMORY_ERROR_AT > 0 and file_index == SIMULATE_MEMORY_ERROR_AT:
             print(f"🧪 [DEBUG] Simulating memory error at file #{file_index}")
             raise MemoryError("Simulated out-of-memory event for debugging")
         
-        # デバッグ: 処理エラーシミュレーション
         if DEBUG_MODE and SIMULATE_PROCESSING_ERROR_AT > 0 and file_index == SIMULATE_PROCESSING_ERROR_AT:
             print(f"🧪 [DEBUG] Simulating processing error at file #{file_index}")
             raise Exception("Simulated processing error for debugging")
         
-        # デバッグ: APIコストを削減するため、ダミーベクトルを返す
         if DEBUG_MODE:
             print(f"🧪 [DEBUG] Returning dummy embedding for '{filename}' (saves API cost)")
-            # モデルに応じた次元数のダミーベクトル
-            dimensions = 1024 if embed_model == "embed-multilingual-v3.0" else 1024  # embed-v4.0も1024次元
+            dimensions = 1024 if embed_model == "embed-multilingual-v3.0" else 1024
             dummy_vec = np.random.normal(0, 1, dimensions)
-            dummy_vec = dummy_vec / np.linalg.norm(dummy_vec)  # 正規化
+            dummy_vec = dummy_vec / np.linalg.norm(dummy_vec)
             return dummy_vec
-        # 1. ファイル名をtextとしてベクトル化
+        
         text_response = co_client.embed(
             texts=[filename],
             model=embed_model,
@@ -209,7 +185,6 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
         )
         text_vec = np.array(text_response.embeddings[0])
         
-        # 2. 画像をimageとしてベクトル化（data URI形式で送信）
         file_extension = filename.lower().split('.')[-1]
         if file_extension in ['jpg', 'jpeg']:
             mime_type = 'jpeg'
@@ -232,18 +207,14 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
         )
         image_vec = np.array(image_response.embeddings[0])
         
-        # 3. コサイン類似度wを計算
         dot_product = np.dot(text_vec, image_vec)
         norm_text = np.linalg.norm(text_vec)
         norm_image = np.linalg.norm(image_vec)
         w = dot_product / (norm_text * norm_image)
         
-        # wを0-1の範囲にクリップ（負の値を避ける）
         w = max(0, min(1, w))
         
-        # 4. 重み付け統合ベクトルを計算
         final_vec = w * text_vec + (1 - w) * image_vec
-        # final_vec = image_vec
         
         print(f"    📊 Text-Image similarity: {w:.3f} for '{filename}'")
         return final_vec
@@ -300,8 +271,80 @@ def save_checkpoint(bucket_name: str, uuid: str, embeddings: list, is_final: boo
         print(f"❌ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed to save checkpoint to gs://{bucket_name}/{uuid}.json: {e}")
         traceback.print_exc()
 
+def calculate_diff(drive_files: list, existing_embeddings: list) -> tuple:
+    """
+    Google DriveとベクトルファイルのDriveとベクトルファイルの差分を計算する
+    
+    Args:
+        drive_files: Google Driveから取得したファイルリスト
+        existing_embeddings: 既存のベクトルデータ
+        
+    Returns:
+        (files_to_add, files_to_delete): 追加対象と削除対象のタプル
+    """
+    # Google Driveの現在のファイルセット（フルパスで管理）
+    drive_file_keys = {f"{f.get('folder_path', '')}/{f['name']}" for f in drive_files}
+    
+    # ベクトルファイルの既存ファイルセット（フルパスで管理）
+    vector_file_keys = {f"{item.get('folder_path', '')}/{item.get('filename', '')}" for item in existing_embeddings}
+    
+    # 追加対象: Driveにあるがベクトルにない
+    keys_to_add = drive_file_keys - vector_file_keys
+    
+    # 削除対象: ベクトルにあるがDriveにない
+    keys_to_delete = vector_file_keys - drive_file_keys
+    
+    # 追加対象のファイル情報を抽出
+    files_to_add = [f for f in drive_files if f"{f.get('folder_path', '')}/{f['name']}" in keys_to_add]
+    
+    print(f"\n📊 Diff Analysis Results:")
+    print(f"   Drive files: {len(drive_file_keys)}")
+    print(f"   Vector files: {len(vector_file_keys)}")
+    print(f"   Files to ADD: {len(files_to_add)}")
+    print(f"   Files to DELETE: {len(keys_to_delete)}")
+    
+    if keys_to_delete:
+        print(f"\n🗑️  Files to be deleted from vector storage:")
+        for key in list(keys_to_delete)[:10]:  # 最初の10件のみ表示
+            print(f"     - {key}")
+        if len(keys_to_delete) > 10:
+            print(f"     ... and {len(keys_to_delete) - 10} more")
+    
+    return files_to_add, keys_to_delete
+
+def remove_deleted_files(existing_embeddings: list, keys_to_delete: set) -> list:
+    """
+    ベクトルファイルから削除対象のファイルを除外する
+    
+    Args:
+        existing_embeddings: 既存のベクトルデータ
+        keys_to_delete: 削除対象のファイルキーセット
+        
+    Returns:
+        削除処理後のベクトルデータ
+    """
+    if not keys_to_delete:
+        return existing_embeddings
+    
+    original_count = len(existing_embeddings)
+    
+    # 削除対象以外を残す
+    filtered_embeddings = [
+        item for item in existing_embeddings
+        if f"{item.get('folder_path', '')}/{item.get('filename', '')}" not in keys_to_delete
+    ]
+    
+    deleted_count = original_count - len(filtered_embeddings)
+    
+    print(f"\n🗑️  Deletion completed:")
+    print(f"   Original: {original_count} embeddings")
+    print(f"   Deleted: {deleted_count} embeddings")
+    print(f"   Remaining: {len(filtered_embeddings)} embeddings")
+    
+    return filtered_embeddings
+
 def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, all_embeddings: list = None) -> list:
-    """単一UUIDの処理"""
+    """単一UUIDの処理（差分検出・削除機能付き）"""
     if all_embeddings is None:
         all_embeddings = []
     
@@ -312,39 +355,46 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
     
     try:
         # 既存のembeddingsを読み込む
-        existing_embeddings, processed_files = load_existing_embeddings(GCS_BUCKET_NAME, uuid)
-        task_embeddings = existing_embeddings.copy()
+        existing_embeddings, _ = load_existing_embeddings(GCS_BUCKET_NAME, uuid)
         
         if DEBUG_MODE:
             # デバッグモードではダミーのファイルリストを使用
-            files_to_process = [
+            drive_files = [
                 {'name': f'debug_image_{uuid}_1.jpg', 'id': 'debug_id_1', 'webViewLink': f'https://debug.example.com/{uuid}_1', 'folder_path': '/debug'},
                 {'name': f'debug_image_{uuid}_2.png', 'id': 'debug_id_2', 'webViewLink': f'https://debug.example.com/{uuid}_2', 'folder_path': '/debug'}
             ]
-            print(f"🧪 [DEBUG] Using {len(files_to_process)} dummy files for UUID {uuid}")
+            print(f"🧪 [DEBUG] Using {len(drive_files)} dummy files for UUID {uuid}")
         else:
-            files_to_process = list_files_in_drive_folder(drive_url)
-            if not files_to_process:
-                print(f"✅ No processable images found for UUID {uuid}")
-                return task_embeddings
+            # Google Driveから現在のファイルリストを取得
+            drive_files = list_files_in_drive_folder(drive_url)
+            if not drive_files:
+                print(f"⚠️  No files found in Google Drive for UUID {uuid}")
+                # Driveにファイルがない場合、既存のベクトルファイルを全削除
+                if existing_embeddings:
+                    print(f"🗑️  Removing all {len(existing_embeddings)} embeddings (Drive is empty)")
+                    save_checkpoint(GCS_BUCKET_NAME, uuid, [], is_final=True)
+                return []
         
-        # 既に処理済みのファイルをスキップ
-        original_count = len(files_to_process)
-        processed_file_keys = {f"{item.get('folder_path', '')}/{item.get('filename', '')}" for item in existing_embeddings}
+        # 差分を計算
+        files_to_add, keys_to_delete = calculate_diff(drive_files, existing_embeddings)
         
-        # デバッグ情報を追加
-        print(f"🔍 Debug - Existing embeddings count: {len(existing_embeddings)}")
-        print(f"🔍 Debug - Processed file keys: {processed_file_keys}")
-        print(f"🔍 Debug - Files to process (before filter): {[f['name'] for f in files_to_process[:5]]}...")  # 最初の5件のみ表示
+        # 削除処理を実行
+        task_embeddings = remove_deleted_files(existing_embeddings, keys_to_delete)
         
-        files_to_process = [f for f in files_to_process if f"{f.get('folder_path', '')}/{f['name']}" not in processed_file_keys]
-        skipped_count = original_count - len(files_to_process)
+        # 削除が発生した場合は即座に保存
+        if keys_to_delete:
+            save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=False)
+            print(f"💾 Saved after deletion: {len(task_embeddings)} embeddings")
         
-        if not files_to_process:
-            print(f"✅ All {skipped_count} images already processed for UUID {uuid}")
+        # 追加対象がない場合は終了
+        if not files_to_add:
+            print(f"✅ No new files to process for UUID {uuid}")
+            if keys_to_delete:
+                # 削除のみ発生した場合は最終保存
+                save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=True)
             return task_embeddings
-
-        print(f"Found {len(files_to_process)} new images to process for UUID {uuid} (skipping {skipped_count} already processed)")
+        
+        print(f"\n📝 Processing {len(files_to_add)} new files...")
         
         if not DEBUG_MODE:
             print("Initializing Google Drive service...")
@@ -354,22 +404,19 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
             drive_service = None
             print("🧪 [DEBUG] Skipping Google Drive service initialization")
         
-        # 処理開始時刻を記録
         start_time = datetime.now()
         
-        for i, file_info in enumerate(files_to_process, 1):
-            print(f"    ({i}/{len(files_to_process)}) Processing: {file_info['name'][:50]}...")
+        for i, file_info in enumerate(files_to_add, 1):
+            print(f"    ({i}/{len(files_to_add)}) Processing: {file_info['name'][:50]}...")
             
             try:
                 if DEBUG_MODE:
-                    # デバッグモードではPILでダミー画像を生成
                     print("      🧪 [DEBUG] Using dummy image data (skipping actual download)")
                     dummy_img = Image.new('RGB', (100, 100), color='red')
                     output = io.BytesIO()
                     dummy_img.save(output, format='JPEG')
                     image_content = output.getvalue()
                 else:
-                    # 1. Download image from Google Drive
                     request = drive_service.files().get_media(fileId=file_info['id'])
                     fh = io.BytesIO()
                     downloader = MediaIoBaseDownload(fh, request)
@@ -378,13 +425,11 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
                         _, done = downloader.next_chunk()
                     image_content = fh.getvalue()
                 
-                # 2. Resize if necessary
                 resized_content = resize_image_if_needed(image_content, file_info['name'])
                 if resized_content is None:
-                    print(f"      ⏭️  Skipping due to resize failure")
+                    print(f"      ⭕️  Skipping due to resize failure")
                     continue
 
-                # 3. Get multimodal embedding
                 embedding = get_multimodal_embedding(resized_content, file_info['name'], i, use_embed_v4)
                 if embedding is not None:
                     result_data = {
@@ -395,35 +440,28 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
                     }
                     task_embeddings.append(result_data)
                     
-                    # 100件ごとに途中保存を実行
                     if i % CHECKPOINT_INTERVAL == 0:
-                        print(f"📌 Checkpoint reached: processed {i}/{len(files_to_process)} files")
+                        print(f"📌 Checkpoint reached: processed {i}/{len(files_to_add)} files")
                         save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=False)
                         print(f"💾 Checkpoint saved: {len(task_embeddings)} embeddings")
-                    
-                    # API制限対策：画像処理の間隔を空ける（現在は無効化）
-                    # if not DEBUG_MODE and i < len(files_to_process):
-                    #     print(f"      ⏱️  Waiting 15 seconds before next API call...")
-                    #     time.sleep(15)  # 15秒待機（5回/分制限対策）
 
             except Exception as e:
                 print(f"      ❌ Error processing {file_info['name']}: {e}")
-                # 個別ファイルエラーは継続
                 continue
         
         # タスク完了後にファイルを保存
-        if task_embeddings != existing_embeddings:
+        if task_embeddings != existing_embeddings or keys_to_delete:
             elapsed_total = (datetime.now() - start_time).total_seconds()
             print(f"   ⏱️  Processing time for UUID {uuid}: {elapsed_total:.1f} seconds")
             save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=True)
             print(f"   ✅ Saved {len(task_embeddings)} embeddings for UUID {uuid}")
+            print(f"   📊 Changes: +{len(files_to_add)} files, -{len(keys_to_delete)} files")
         
         return task_embeddings
         
     except Exception as e:
         print(f"   ❌ Error processing UUID {uuid}: {e}")
         traceback.print_exc()
-        # エラー時も保存を試みる
         if task_embeddings:
             try:
                 save_checkpoint(GCS_BUCKET_NAME, uuid, task_embeddings, is_final=False)
@@ -436,7 +474,6 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
 def main():
     """Cloud Runジョブとして実行されるメイン関数"""
     
-    # 環境変数を表示
     print("🔧 Environment Variables:")
     env_vars = [
         "GCS_BUCKET_NAME", "COHERE_API_KEY", "UUID", "DRIVE_URL", 
@@ -445,19 +482,17 @@ def main():
     for var in env_vars:
         value = os.getenv(var, "NOT_SET")
         if var == "COHERE_API_KEY" and value != "NOT_SET":
-            # APIキーは最初の10文字のみ表示
             value = f"{value[:10]}..." if len(value) > 10 else value
         elif var == "BATCH_TASKS" and value != "NOT_SET":
-            # BATCH_TASKSは長いので長さのみ表示
             value = f"[{len(value)} characters]" if value else "EMPTY"
         print(f"  {var}: {value}")
     print()
     
     if BATCH_MODE:
         print("===================================================")
-        print(f"  Starting BATCH Vectorization Job")
+        print(f"  Starting BATCH Vectorization Job (with Diff Detection)")
         print(f"  Number of tasks: {len(BATCH_TASKS)}")
-        print(f"  Checkpoint Mode: Every {CHECKPOINT_INTERVAL} files + error handling")
+        print(f"  Features: Auto-add new files + Auto-delete removed files")
         print("===================================================")
         
         total_processed = 0
@@ -475,34 +510,25 @@ def main():
                 process_single_uuid(uuid, drive_url, use_embed_v4)
                 total_processed += 1
                 print(f"✅ Task {i} completed successfully")
-                
-                # タスク間の待機（API制限対策）（現在は無効化）
-                # if i < len(BATCH_TASKS):
-                #     print(f"⏱️  Waiting 30 seconds before next task...")
-                #     time.sleep(30)  # タスク間は30秒待機
                     
             except Exception as e:
                 print(f"❌ Task {i} failed: {e}")
                 total_errors += 1
-                # タスクが失敗しても次のタスクを継続
                 continue
         
         print(f"\n🎉 Batch job completed: {total_processed} successful, {total_errors} failed")
     else:
-        # 単一モード（従来通り）
         print("===================================================")
-        print(f"  Starting SINGLE Vectorization Job")
+        print(f"  Starting SINGLE Vectorization Job (with Diff Detection)")
         print(f"  UUID: {UUID}")
         print(f"  Drive URL: {DRIVE_URL}")
         print(f"  Use Embed V4: {USE_EMBED_V4}")
-        print(f"  Checkpoint Mode: Every {CHECKPOINT_INTERVAL} files + error handling")
+        print(f"  Features: Auto-add new files + Auto-delete removed files")
         print("===================================================")
         
-        all_embeddings = []  # グローバルに参照できるように最初に初期化
+        all_embeddings = []
         
-        # シグナルハンドラーの設定
         def signal_handler(signum, frame):
-            """シグナル受信時の処理"""
             print(f"\n⚠️  Signal {signum} received. Attempting to save current progress...")
             if all_embeddings:
                 try:
@@ -512,20 +538,11 @@ def main():
                     print(f"❌ Emergency save failed: {e}")
             sys.exit(1)
         
-        # SIGTERM（Cloud Runからの終了シグナル）とSIGINT（Ctrl+C）を捕捉
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
-        
-        print("===================================================")
-        print(f"  Starting Vectorization Job for UUID: {UUID}")
-        print(f"  Target Drive URL: {DRIVE_URL}")
-        print(f"  Using Embed Model: {'embed-v4.0' if USE_EMBED_V4 else 'embed-multilingual-v3.0'}")
-        print(f"  Checkpoint Mode: Save on error only")
-        print("===================================================")
         
         all_embeddings = process_single_uuid(UUID, DRIVE_URL, USE_EMBED_V4)
         print("🎉 Single job finished successfully.")
 
 if __name__ == "__main__":
     main()
-
