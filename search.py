@@ -116,14 +116,15 @@ class ImageSearcher:
             traceback.print_exc()
             raise Exception(f"Failed to load vector data for UUID {self.uuid}") from e
             
-    def search_images(self, query_embedding: np.ndarray, top_k: int, exclude_files: Optional[List[str]] = None) -> List[Dict]:
+    def search_images(self, query_embedding: np.ndarray, top_k: int, exclude_files: Optional[List[str]] = None, top_n_pool: int = 25) -> List[Dict]:
         """
-        Performs a similarity search using cosine similarity.
+        Performs a similarity search using cosine similarity, then randomly selects from top N results.
         
         Args:
             query_embedding: The vector of the search query
-            top_k: The number of top results to return
+            top_k: The number of results to return (randomly selected from top_n_pool)
             exclude_files: Optional list of filenames to exclude from search candidates
+            top_n_pool: Number of top similar images to select from randomly (default: 50)
             
         Returns:
             List of dictionaries containing search results with similarity scores
@@ -132,7 +133,7 @@ class ImageSearcher:
             print("⚠️ No embeddings data available for search")
             return []
 
-        print(f"🔍 Performing similarity search for top_k={top_k}")
+        print(f"🔍 Performing similarity search with random selection (pool={top_n_pool}, select={top_k})")
         
         # Convert exclude_files to a set for faster lookup
         exclude_set = set(exclude_files) if exclude_files else set()
@@ -164,12 +165,17 @@ class ImageSearcher:
                 np.linalg.norm(filtered_embeddings, axis=1) * np.linalg.norm(query_embedding)
             )
             
-            # Get top-k indices sorted by similarity (descending)
-            num_results = min(top_k, len(similarities))
-            top_k_indices = np.argsort(similarities)[::-1][:num_results]
+            # Get top-n indices sorted by similarity (descending) for the pool
+            pool_size = min(top_n_pool, len(similarities))
+            top_pool_indices = np.argsort(similarities)[::-1][:pool_size]
+            
+            # Randomly select top_k items from the pool
+            num_results = min(top_k, len(top_pool_indices))
+            selected_pool_indices = np.random.choice(len(top_pool_indices), num_results, replace=False)
+            selected_indices = top_pool_indices[selected_pool_indices]
             
             results = []
-            for idx in top_k_indices:
+            for idx in selected_indices:
                 # Map back to original embeddings_data index
                 original_idx = valid_indices[idx]
                 result = {
@@ -179,9 +185,12 @@ class ImageSearcher:
                 }
                 results.append(result)
             
-            print(f"✅ Found {len(results)} similar images from {len(valid_indices)} candidates")
+            # Sort results by similarity for better output readability
+            results.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            print(f"✅ Randomly selected {len(results)} images from top {pool_size} similar candidates")
             if results:
-                print(f"   Top similarity: {results[0]['similarity']:.4f}")
+                print(f"   Similarity range: {results[0]['similarity']:.4f} ~ {results[-1]['similarity']:.4f}")
                 
             return results
             

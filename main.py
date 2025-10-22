@@ -11,6 +11,8 @@ import traceback
 from typing import Dict, Optional, List
 
 import cohere
+import gspread
+from google.oauth2 import service_account
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
@@ -30,6 +32,8 @@ class Config:
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.vectorize_job_name = os.getenv("VECTORIZE_JOB_NAME", "cohere-rag-vectorize-job")
         self.gcp_region = os.getenv("GCP_REGION", "asia-northeast1")
+        self.google_sheets_id = "1DEGQefuNWfivae9VfyNLjhrhVaSy9JwWWdI7Gx3M26s"
+        self.company_sheet_name = "会社一覧"
         
         self._validate_required_vars()
     
@@ -60,6 +64,20 @@ class VectorizeRequest(BaseModel):
     """Request model for vectorization endpoint."""
     uuid: str
     drive_url: str
+    use_embed_v4: bool = False
+
+
+class VectorizeTask(BaseModel):
+    """Single vectorization task model."""
+    uuid: str
+    drive_url: str
+    company_name: str = ""
+    use_embed_v4: bool = False
+
+
+class BatchVectorizeRequest(BaseModel):
+    """Request model for batch vectorization endpoint."""
+    tasks: List[VectorizeTask]
 
 
 class SearchRequest(BaseModel):
@@ -69,6 +87,7 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     trigger: str = "類似画像検索"
     exclude_files: List[str] = []
+    use_embed_v4: bool = False
 
 
 class JobService:
@@ -78,13 +97,14 @@ class JobService:
         self.config = config
         self.run_client = run_client
     
-    def trigger_vectorization_job(self, uuid: str, drive_url: str) -> Dict:
+    def trigger_vectorization_job(self, uuid: str, drive_url: str, use_embed_v4: bool = False) -> Dict:
         """
-        Trigger a Cloud Run Job for vectorization.
+        Trigger a Cloud Run Job for single UUID vectorization.
         
         Args:
             uuid: Company UUID
             drive_url: Google Drive folder URL
+            use_embed_v4: Whether to use embed-v4.0 model
             
         Returns:
             Dict with job execution information
@@ -107,7 +127,10 @@ class JobService:
                         run_v2.RunJobRequest.Overrides.ContainerOverride(
                             env=[
                                 {"name": "UUID", "value": uuid},
-                                {"name": "DRIVE_URL", "value": drive_url}
+                                {"name": "DRIVE_URL", "value": drive_url},
+                                {"name": "USE_EMBED_V4", "value": str(use_embed_v4)},
+                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
+                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
                             ]
                         )
                     ]
@@ -137,6 +160,71 @@ class JobService:
             traceback.print_exc()
             raise Exception(error_msg)
 
+    def trigger_batch_vectorization_job(self, tasks: List[VectorizeTask]) -> Dict:
+        """
+        Trigger a Cloud Run Job for batch vectorization of multiple UUIDs.
+        
+        Args:
+            tasks: List of vectorization tasks
+            
+        Returns:
+            Dict with job execution information
+            
+        Raises:
+            Exception: If job execution fails
+        """
+        print(f"API: Received request to start batch vectorization job for {len(tasks)} tasks")
+        
+        job_parent = f"projects/{self.config.gcp_project_id}/locations/{self.config.gcp_region}"
+        job_name = f"{job_parent}/jobs/{self.config.vectorize_job_name}"
+        
+        try:
+            print(f"  -> Attempting to run batch job: {job_name}")
+            
+            # Serialize tasks to JSON for passing as environment variable
+            import json
+            tasks_json = json.dumps([task.dict() for task in tasks])
+            
+            request_object = run_v2.RunJobRequest(
+                name=job_name,
+                overrides=run_v2.RunJobRequest.Overrides(
+                    container_overrides=[
+                        run_v2.RunJobRequest.Overrides.ContainerOverride(
+                            env=[
+                                {"name": "BATCH_MODE", "value": "true"},
+                                {"name": "BATCH_TASKS", "value": tasks_json},
+                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
+                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
+                            ]
+                        )
+                    ]
+                )
+            )
+            
+            response = self.run_client.run_job(request=request_object)
+            
+            # Extract execution info from response
+            if hasattr(response, 'name'):
+                execution_info = response.name
+            elif hasattr(response, 'metadata'):
+                execution_info = str(response.metadata)
+            else:
+                execution_info = f"Batch job triggered for {len(tasks)} tasks"
+            
+            print(f"  -> Batch job execution started. Info: {execution_info}")
+            return {
+                "message": f"Batch vectorization job started successfully for {len(tasks)} tasks",
+                "execution_info": execution_info,
+                "job_name": self.config.vectorize_job_name,
+                "task_count": len(tasks)
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to start batch Cloud Run Job: {str(e)}"
+            print(f"  -> ERROR: {error_msg}")
+            traceback.print_exc()
+            raise Exception(error_msg)
+
 
 # Initialize services
 job_service = JobService(config, run_client)
@@ -146,7 +234,17 @@ job_service = JobService(config, run_client)
 async def trigger_vectorization_job(request: VectorizeRequest):
     """Triggers a Cloud Run Job to perform vectorization."""
     try:
-        result = job_service.trigger_vectorization_job(request.uuid, request.drive_url)
+        result = job_service.trigger_vectorization_job(request.uuid, request.drive_url, request.use_embed_v4)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/vectorize-batch", status_code=202)
+async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
+    """Triggers a Cloud Run Job to perform batch vectorization."""
+    try:
+        result = job_service.trigger_batch_vectorization_job(request.tasks)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -159,7 +257,7 @@ class SearchService:
         self.config = config
         self.cohere_client = cohere_client
     
-    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None) -> Dict:
+    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
         """
         Search for similar images using text query.
         
@@ -168,6 +266,7 @@ class SearchService:
             query: Search query text
             top_k: Number of results to return
             exclude_files: List of filenames to exclude from search results
+            use_embed_v4: Whether to use embed-v4.0 model
             
         Returns:
             Dict with search results
@@ -182,10 +281,12 @@ class SearchService:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
+        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
+        print(f"🔧 Using embedding model: {embed_model}")
+        
         response = self.cohere_client.embed(
             texts=[query], 
-            model="embed-multilingual-v3.0", 
-            # model="embed-v4.0",
+            model=embed_model,
             input_type="search_query"
         )
         query_embedding = response.embeddings[0]
@@ -224,6 +325,179 @@ class SearchService:
 
 # Initialize services
 search_service = SearchService(config, cohere_client)
+
+
+class SheetsService:
+    """Service for managing Google Sheets operations."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self._gc = self._get_sheets_client()
+    
+    def _get_sheets_client(self) -> gspread.Client:
+        """Initialize Google Sheets client with appropriate credentials."""
+        environment = os.getenv("ENVIRONMENT", "local")
+        
+        if environment == "production":
+            import google.auth
+            credentials, _ = google.auth.default(scopes=[
+                'https://www.googleapis.com/auth/spreadsheets.readonly',
+                'https://www.googleapis.com/auth/drive.readonly'
+            ])
+            return gspread.authorize(credentials)
+        else:
+            key_file = "config/marketing-automation-461305-2acf4965e0b0.json"
+            if os.path.exists(key_file):
+                credentials = service_account.Credentials.from_service_account_file(
+                    key_file,
+                    scopes=[
+                        'https://www.googleapis.com/auth/spreadsheets.readonly',
+                        'https://www.googleapis.com/auth/drive.readonly'
+                    ]
+                )
+                return gspread.authorize(credentials)
+            else:
+                import google.auth
+                credentials, _ = google.auth.default(scopes=[
+                    'https://www.googleapis.com/auth/spreadsheets.readonly',
+                    'https://www.googleapis.com/auth/drive.readonly'
+                ])
+                return gspread.authorize(credentials)
+    
+    def get_companies_for_auto_update(self) -> List[Dict]:
+        """
+        Fetch companies that have both URL and checkbox=TRUE from Google Sheets.
+        
+        Returns:
+            List of dictionaries with company information
+        """
+        try:
+            spreadsheet = self._gc.open_by_key(self.config.google_sheets_id)
+            sheet = spreadsheet.worksheet(self.config.company_sheet_name)
+            
+            # Get all values from the sheet
+            all_values = sheet.get_all_values()
+            
+            if len(all_values) < 2:  # No data rows
+                print("No data found in the company sheet")
+                return []
+            
+            data_rows = all_values[1:]
+            
+            companies_to_update = []
+            
+            for row_index, row in enumerate(data_rows, start=2):  # Start from row 2 (skip header)
+                try:
+                    # Assuming columns: A=UUID, B=Company Name, C=Drive URL, F=Checkbox
+                    if len(row) < 6:
+                        continue
+                    
+                    uuid = row[0].strip() if len(row) > 0 else ""
+                    company_name = row[1].strip() if len(row) > 1 else ""
+                    drive_url = row[2].strip() if len(row) > 2 else ""
+                    checkbox_status = row[5].strip().upper() if len(row) > 5 else ""
+                    
+                    # Check if URL exists and checkbox is TRUE
+                    if drive_url and checkbox_status == "TRUE":
+                        companies_to_update.append({
+                            "uuid": uuid,
+                            "company_name": company_name,
+                            "drive_url": drive_url,
+                            "row_number": row_index,
+                            "use_embed_v4": "embed-v4.0" in company_name
+                        })
+                        print(f"Found company for auto-update: {company_name} (UUID: {uuid})")
+                
+                except Exception as e:
+                    print(f"Error processing row {row_index}: {e}")
+                    continue
+            
+            print(f"Total companies found for auto-update: {len(companies_to_update)}")
+            return companies_to_update
+            
+        except Exception as e:
+            print(f"Error fetching companies from Google Sheets: {e}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to fetch companies from Google Sheets: {str(e)}")
+
+
+# Initialize sheets service
+sheets_service = SheetsService(config)
+
+
+@app.post("/auto-update")
+async def auto_update_vectors():
+    """
+    Endpoint for automatic vector file updates.
+    Fetches companies with checkbox=TRUE from Google Sheets and triggers vectorization.
+    """
+    try:
+        print("🔄 Starting automatic vector update process...")
+        
+        # Get companies that need to be updated
+        companies = sheets_service.get_companies_for_auto_update()
+        
+        if not companies:
+            return {
+                "message": "No companies found with enabled auto-update",
+                "processed_count": 0,
+                "results": []
+            }
+        
+        results = []
+        success_count = 0
+        failure_count = 0
+        
+        # バッチジョブとして実行
+        try:
+            print(f"🎯 Triggering batch vectorization for {len(companies)} companies")
+            
+            # タスクリストを作成
+            tasks = []
+            for company in companies:
+                task = VectorizeTask(
+                    uuid=company['uuid'],
+                    drive_url=company['drive_url'],
+                    company_name=company['company_name'],
+                    use_embed_v4=company['use_embed_v4']
+                )
+                tasks.append(task)
+            
+            # バッチジョブを実行
+            batch_result = job_service.trigger_batch_vectorization_job(tasks)
+            
+            results.append({
+                "status": "success",
+                "message": batch_result['message'],
+                "task_count": batch_result.get('task_count', len(companies)),
+                "execution_info": batch_result.get('execution_info', '')
+            })
+            success_count = len(companies)
+            
+        except Exception as e:
+            error_msg = f"Failed to trigger batch vectorization: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            results.append({
+                "status": "error",
+                "message": error_msg
+            })
+            failure_count = len(companies)
+        
+        print(f"✅ Auto-update process completed. Success: {success_count}, Failures: {failure_count}")
+        
+        return {
+            "message": f"Auto-update process completed. {success_count} successful, {failure_count} failed.",
+            "processed_count": len(companies),
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in auto-update process: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Auto-update process failed: {str(e)}")
 
 
 @app.get("/search", response_model=Dict)
@@ -283,7 +557,8 @@ def search_images_post(request: SearchRequest):
                 request.uuid, 
                 request.q, 
                 request.top_k,
-                request.exclude_files
+                request.exclude_files,
+                request.use_embed_v4
             )
             return result.get("results", [])
             
