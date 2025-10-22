@@ -32,7 +32,11 @@ class Config:
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.vectorize_job_name = os.getenv("VECTORIZE_JOB_NAME", "cohere-rag-vectorize-job")
         self.gcp_region = os.getenv("GCP_REGION", "asia-northeast1")
-        self.google_sheets_id = "1DEGQefuNWfivae9VfyNLjhrhVaSy9JwWWdI7Gx3M26s"
+        # Google Sheets ID は環境変数で上書き可能。未指定時は ENVIRONMENT に応じて既定値を選ぶ
+        dev_sheets_id = "1xPY1w4q9wm607hNK9Eb0D5v5ub7JFRihx9d-VOpHYOo"
+        prod_sheets_id = "1pxSyLLZ-G3U3wwTYNgX_Qzijv7Mzn_6xSRIxGrM9l-4"
+        default_sheets_id = prod_sheets_id if os.getenv("ENVIRONMENT") == "production" else dev_sheets_id
+        self.google_sheets_id = os.getenv("GOOGLE_SHEETS_ID", default_sheets_id)
         self.company_sheet_name = "会社一覧"
         
         self._validate_required_vars()
