@@ -89,9 +89,10 @@ class SearchRequest(BaseModel):
     uuid: str
     q: Optional[str] = None
     top_k: int = 5
-    trigger: str = "類似画像検索"
+    trigger: str = "スタンダード"
     exclude_files: List[str] = []
     use_embed_v4: bool = False
+    top_n: Optional[int] = None
 
 
 class JobService:
@@ -261,23 +262,21 @@ class SearchService:
         self.config = config
         self.cohere_client = cohere_client
     
-    def search_similar_images(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
-        """
-        Search for similar images using text query.
-        
-        Args:
-            uuid: Company UUID
-            query: Search query text
-            top_k: Number of results to return
-            exclude_files: List of filenames to exclude from search results
-            use_embed_v4: Whether to use embed-v4.0 model
-            
-        Returns:
-            Dict with search results
-        """
-        print(f"🧠 Generating embedding for query: '{query}'")
+    def _embed_query(self, query: str, use_embed_v4: bool) -> List[float]:
+        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
+        print(f"🔧 Using embedding model: {embed_model}")
+        response = self.cohere_client.embed(
+            texts=[query],
+            model=embed_model,
+            input_type="search_query"
+        )
+        return response.embeddings[0]
+    
+    def search_ranked(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
+        """Return the top_k results ordered by similarity score."""
+        print(f"🧠 [STANDARD] Generating embedding for query: '{query}'")
         if exclude_files:
-            print(f"📋 Excluding {len(exclude_files)} files from search")
+            print(f"📋 Excluding {len(exclude_files)} files from ranked search")
         
         try:
             searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
@@ -285,20 +284,46 @@ class SearchService:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
-        print(f"🔧 Using embedding model: {embed_model}")
-        
-        response = self.cohere_client.embed(
-            texts=[query], 
-            model=embed_model,
-            input_type="search_query"
-        )
-        query_embedding = response.embeddings[0]
-        
+        query_embedding = self._embed_query(query, use_embed_v4)
         results = searcher.search_images(query_embedding=query_embedding, top_k=top_k, exclude_files=exclude_files)
-        print(f"✅ Similarity search completed. Returning {len(results)} results")
+        print(f"✅ Standard search completed. Returning {len(results)} results")
         
         return {"query": query, "results": results}
+    
+    def search_shuffle(
+        self,
+        uuid: str,
+        query: str,
+        top_k: int,
+        top_n: Optional[int] = None,
+        exclude_files: List[str] = None,
+        use_embed_v4: bool = False
+    ) -> Dict:
+        """Return top_k results sampled from the ranked top_n pool."""
+        print(f"🧠 [SHUFFLE] Generating embedding for query: '{query}'")
+        if exclude_files:
+            print(f"📋 Excluding {len(exclude_files)} files from shuffle search")
+        
+        try:
+            searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
+        except FileNotFoundError as e:
+            print(f"❌ Vector data not found: {e}")
+            raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
+        
+        query_embedding = self._embed_query(query, use_embed_v4)
+        pool_size = max(top_k * 3, 20) if top_n is None else max(top_n, top_k)
+        pool = searcher.search_images(query_embedding=query_embedding, top_k=pool_size, exclude_files=exclude_files)
+        
+        if len(pool) <= top_k:
+            chosen = pool
+        else:
+            import random
+            indices = random.sample(range(len(pool)), k=top_k)
+            indices.sort()
+            chosen = [pool[i] for i in indices]
+        
+        print(f"✅ Shuffle search completed. Returning {len(chosen)} results from pool size {len(pool)}")
+        return {"query": query, "results": chosen}
     
     def search_random_images(self, uuid: str, count: int, exclude_files: List[str] = None) -> Dict:
         """
@@ -509,27 +534,37 @@ def search_images_api(
     uuid: str = Query(..., description="UUID of the company to search for"),
     q: Optional[str] = Query(None, description="Search query text"),
     top_k: int = Query(5, ge=1, le=50, description="Number of results to return"),
-    trigger: str = Query("類似画像検索", description="Search type: '類似画像検索' or 'ランダム画像検索'"),
+    trigger: str = Query("スタンダード", description="Search type: 'スタンダード' | 'シャッフル' | 'ランダム' (互換: '類似画像検索'→シャッフル)"),
+    top_n: Optional[int] = Query(None, ge=1, le=200, description="Candidate pool size for shuffle mode"),
 ):
     """Performs image search using the specified vector data."""
     print(f"🔍 Search API called: UUID={uuid}, trigger={trigger}, top_k={top_k}")
     if q:
         print(f"   Query: '{q}'")
     
+    normalized_trigger = "シャッフル" if trigger == "類似画像検索" else trigger
+    
     try:
-        if trigger == "類似画像検索":
+        if normalized_trigger == "スタンダード":
             if not q:
-                print("❌ Missing query parameter for similarity search")
-                raise HTTPException(status_code=400, detail="Query 'q' is required for similar image search.")
+                print("❌ Missing query parameter for standard search")
+                raise HTTPException(status_code=400, detail="Query 'q' is required for standard search.")
             
-            return search_service.search_similar_images(uuid, q, top_k)
+            return search_service.search_ranked(uuid, q, top_k)
             
-        elif trigger == "ランダム画像検索":
+        elif normalized_trigger == "シャッフル":
+            if not q:
+                print("❌ Missing query parameter for shuffle search")
+                raise HTTPException(status_code=400, detail="Query 'q' is required for shuffle search.")
+            
+            return search_service.search_shuffle(uuid, q, top_k, top_n=top_n)
+            
+        elif normalized_trigger == "ランダム":
             return search_service.search_random_images(uuid, top_k)
             
         else:
-            print(f"❌ Invalid trigger: {trigger}")
-            raise HTTPException(status_code=400, detail=f"Invalid trigger: {trigger}")
+            print(f"❌ Invalid trigger: {normalized_trigger}")
+            raise HTTPException(status_code=400, detail=f"Invalid trigger: {normalized_trigger}")
             
     except HTTPException:
         raise
@@ -551,22 +586,39 @@ def search_images_post(request: SearchRequest):
     if request.exclude_files:
         print(f"   Excluding {len(request.exclude_files)} files")
     
+    normalized = "シャッフル" if request.trigger == "類似画像検索" else request.trigger
+    
     try:
-        if request.trigger == "類似画像検索":
+        if normalized == "スタンダード":
             if not request.q:
-                print("❌ Missing query parameter for similarity search")
-                raise HTTPException(status_code=400, detail="Query 'q' is required for similar image search.")
+                print("❌ Missing query parameter for standard search")
+                raise HTTPException(status_code=400, detail="Query 'q' is required for standard search.")
             
-            result = search_service.search_similar_images(
-                request.uuid, 
-                request.q, 
+            result = search_service.search_ranked(
+                request.uuid,
+                request.q,
                 request.top_k,
                 request.exclude_files,
                 request.use_embed_v4
             )
             return result.get("results", [])
             
-        elif request.trigger == "ランダム画像検索":
+        elif normalized == "シャッフル":
+            if not request.q:
+                print("❌ Missing query parameter for shuffle search")
+                raise HTTPException(status_code=400, detail="Query 'q' is required for shuffle search.")
+            
+            result = search_service.search_shuffle(
+                request.uuid,
+                request.q,
+                request.top_k,
+                request.top_n,
+                request.exclude_files,
+                request.use_embed_v4
+            )
+            return result.get("results", [])
+            
+        elif normalized == "ランダム":
             result = search_service.search_random_images(
                 request.uuid, 
                 request.top_k,
@@ -575,8 +627,8 @@ def search_images_post(request: SearchRequest):
             return result.get("results", [])
             
         else:
-            print(f"❌ Invalid trigger: {request.trigger}")
-            raise HTTPException(status_code=400, detail=f"Invalid trigger: {request.trigger}")
+            print(f"❌ Invalid trigger: {normalized}")
+            raise HTTPException(status_code=400, detail=f"Invalid trigger: {normalized}")
             
     except HTTPException:
         raise
