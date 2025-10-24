@@ -117,6 +117,7 @@ class ImageSearcher:
             raise Exception(f"Failed to load vector data for UUID {self.uuid}") from e
             
     def search_images(self, query_embedding: np.ndarray, top_k: int, exclude_files: Optional[List[str]] = None, top_n_pool: int = 25) -> List[Dict]:
+        top_n_pool = top_k
         """
         Performs a similarity search using cosine similarity, then randomly selects from top N results.
         
