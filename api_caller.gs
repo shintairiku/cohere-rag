@@ -41,13 +41,80 @@ const Config = {
 
   // Trigger Text Constants
   TRIGGERS: {
-    SIMILAR: "類似画像検索",
-    RANDOM: "ランダム画像検索",
+    STANDARD: "スタンダード",
+    SHUFFLE: "シャッフル",
+    RANDOM: "ランダム",
+    LEGACY_SIMILAR: "類似画像検索",
+    LEGACY_RANDOM: "ランダム画像検索",
     NOT_EXECUTED: "未実行"
   },
 
+  TRIGGER_OPTIONS: ["未実行", "スタンダード", "シャッフル", "ランダム", "実行完了"],
+
   // Exclusion List Configuration (削除予定)
 };
+
+/**
+ * 新しいトリガー候補値でデータ検証を構築します。
+ * @return {GoogleAppsScript.Spreadsheet.DataValidation}
+ */
+function buildTriggerValidation_() {
+  return SpreadsheetApp.newDataValidation()
+    .requireValueInList(Config.TRIGGER_OPTIONS, true)
+    .setAllowInvalid(false)
+    .build();
+}
+
+/**
+ * D列のトリガー値を新仕様に沿って正規化します。
+ * 互換のため旧称は新名称へマッピングします。
+ * @param {string} triggerValue
+ * @return {string|null} スタンダード/シャッフル/ランダムのいずれか。対象外は null。
+ */
+function normalizeTriggerValue(triggerValue) {
+  switch (triggerValue) {
+    case Config.TRIGGERS.STANDARD:
+    case Config.TRIGGERS.SHUFFLE:
+    case Config.TRIGGERS.RANDOM:
+      return triggerValue;
+    case Config.TRIGGERS.LEGACY_SIMILAR:
+      return Config.TRIGGERS.SHUFFLE;
+    case Config.TRIGGERS.LEGACY_RANDOM:
+      return Config.TRIGGERS.RANDOM;
+    default:
+      return null;
+  }
+}
+
+/**
+ * プラットフォームシートのD列に最新のデータ検証を適用します。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function applyTriggerValidationToSheet_(sheet) {
+  const startRow = 2;
+  const numRows = sheet.getMaxRows() - startRow + 1;
+  if (numRows <= 0) {
+    return;
+  }
+  const range = sheet.getRange(startRow, Config.PLATFORM.SEARCH_TRIGGER_COL, numRows, 1);
+  range.setDataValidation(buildTriggerValidation_());
+}
+
+/**
+ * すべてのプラットフォームシートにトリガー用データ検証を適用します。
+ */
+function applyTriggerValidationToPlatformSheets_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  if (!spreadsheet) {
+    return;
+  }
+  const sheets = spreadsheet.getSheets();
+  for (const sheet of sheets) {
+    if (sheet.getName().startsWith(Config.PLATFORM.SHEET_PREFIX)) {
+      applyTriggerValidationToSheet_(sheet);
+    }
+  }
+}
 
 /**
  * スプレッドシートを開いたときにカスタムメニューをUIに追加します。
@@ -60,6 +127,7 @@ function onOpen() {
     .addSeparator()
     .addItem('空のUUIDを一括生成', 'generateUuids')
     .addToUi();
+  applyTriggerValidationToPlatformSheets_();
 }
 
 /**
@@ -81,13 +149,17 @@ function handleSheetEdit(e) {
     // --- 検索シートでの検索トリガー ---
     if (sheetName.startsWith(Config.PLATFORM.SHEET_PREFIX) && col === Config.PLATFORM.SEARCH_TRIGGER_COL && row > 1) {
       Logger.log("-> Condition Met: This is a search trigger edit.");
-      if (value === Config.TRIGGERS.SIMILAR || value === Config.TRIGGERS.RANDOM) {
-        performSearch(sheet, row, value);
+      const normalizedTrigger = normalizeTriggerValue(value);
+      if (normalizedTrigger) {
+        performSearch(sheet, row, normalizedTrigger);
       } else if (value === Config.TRIGGERS.NOT_EXECUTED) {
         clearPreviousResults(sheet, row);
         // C列の日時もクリア（B→C）
         const dateCell = sheet.getRange(row, Config.PLATFORM.SEARCH_DATE_COL);
         dateCell.setValue("");
+        applyTriggerValidationToSheet_(sheet);
+      } else if (value && value !== "") {
+        Logger.log(`-> Warning: Unsupported trigger value "${value}"`);
       }
     }
 
@@ -121,10 +193,10 @@ function handleSheetEdit(e) {
 function performSearch(sheet, row, triggerValue) {
   Logger.log(`[performSearch] Starting search for row ${row}, trigger: ${triggerValue}`);
   const statusCell = sheet.getRange(row, Config.PLATFORM.SEARCH_TRIGGER_COL);
-  const validation = statusCell.getDataValidation();
+  const hadValidation = !!statusCell.getDataValidation();
 
   try {
-    if (validation) {
+    if (hadValidation) {
       statusCell.clearDataValidations();
     }
     
@@ -143,8 +215,10 @@ function performSearch(sheet, row, triggerValue) {
     if (!companyUuid) throw new Error("「会社一覧」シートで対応する企業が見つかりません。");
     
     const query = sheet.getRange(row, Config.PLATFORM.SEARCH_QUERY_COL).getValue();
-    if (triggerValue === Config.TRIGGERS.SIMILAR && !query) {
-      throw new Error("類似画像検索には検索クエリが必要です。");
+    const needsQuery = (triggerValue === Config.TRIGGERS.STANDARD || triggerValue === Config.TRIGGERS.SHUFFLE);
+    if (needsQuery && !query) {
+      const modeLabel = (triggerValue === Config.TRIGGERS.STANDARD) ? "スタンダード検索" : "シャッフル検索";
+      throw new Error(`${modeLabel}には検索クエリが必要です。`);
     }
 
     // ★検索表示数をB列から取得★
@@ -180,9 +254,7 @@ function performSearch(sheet, row, triggerValue) {
     Logger.log(`[performSearch] ERROR: ${error.toString()}\n${error.stack}`);
     statusCell.setValue(`エラー: ${error.message}`);
   } finally {
-    if (validation) {
-      statusCell.setDataValidation(validation);
-    }
+    statusCell.setDataValidation(buildTriggerValidation_());
     Logger.log(`[performSearch] Finished search for row ${row}. Validation rule restored.`);
   }
 }
