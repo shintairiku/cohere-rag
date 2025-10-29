@@ -49,7 +49,7 @@ const Config = {
     NOT_EXECUTED: "未実行"
   },
 
-  TRIGGER_OPTIONS: ["スタンダード", "シャッフル", "ランダム"],
+  TRIGGER_OPTIONS: ["未実行", "スタンダード", "シャッフル", "ランダム", "実行完了"],
 
   // Exclusion List Configuration (削除予定)
 };
