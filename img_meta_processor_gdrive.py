@@ -2,22 +2,19 @@ import os
 import io
 import json
 import traceback
-import base64
-import hashlib
-import gc
 import signal
 import sys
-import time
 from datetime import datetime
 
-import cohere
 import numpy as np
 from dotenv import load_dotenv
 from google.cloud import storage
-from PIL import Image
+from PIL import Image as PILImage
+
+from embedding_providers import get_embedding_provider
 
 # Decompression bomb対策: 最大画像ピクセル数を設定（約500MP）
-Image.MAX_IMAGE_PIXELS = 500_000_000
+PILImage.MAX_IMAGE_PIXELS = 500_000_000
 
 import google.auth
 from googleapiclient.discovery import build
@@ -42,6 +39,10 @@ else:
 
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+GCP_REGION = os.getenv("GCP_REGION", "asia-northeast1")
+VERTEX_MULTIMODAL_MODEL = os.getenv("VERTEX_MULTIMODAL_MODEL", "multimodalembedding@001")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "vertex_ai").lower()
 MAX_IMAGE_SIZE_MB = 5
 CHECKPOINT_INTERVAL = 100
 
@@ -51,24 +52,20 @@ SIMULATE_MEMORY_ERROR_AT = int(os.getenv("SIMULATE_MEMORY_ERROR_AT", "0"))
 SIMULATE_PROCESSING_ERROR_AT = int(os.getenv("SIMULATE_PROCESSING_ERROR_AT", "0"))
 
 if BATCH_MODE:
-    if not all([GCS_BUCKET_NAME, COHERE_API_KEY]):
-        missing = [
-            var for var in ['GCS_BUCKET_NAME', 'COHERE_API_KEY']
-            if not os.getenv(var)
-        ]
+    required_vars = ['GCS_BUCKET_NAME', 'GCP_PROJECT_ID']
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
         raise RuntimeError(f"FATAL: Required environment variables are missing: {', '.join(missing)}")
     if not BATCH_TASKS:
         raise RuntimeError("FATAL: No tasks provided in batch mode")
 else:
-    if not all([GCS_BUCKET_NAME, COHERE_API_KEY, UUID, DRIVE_URL]):
-        missing = [
-            var for var in ['GCS_BUCKET_NAME', 'COHERE_API_KEY', 'UUID', 'DRIVE_URL']
-            if not os.getenv(var)
-        ]
+    required_vars = ['GCS_BUCKET_NAME', 'GCP_PROJECT_ID', 'UUID', 'DRIVE_URL']
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
         raise RuntimeError(f"FATAL: Required environment variables are missing: {', '.join(missing)}")
 
-# --- 2. グローバルクライアントの初期化 ---
-co_client = cohere.Client(COHERE_API_KEY)
+if EMBEDDING_PROVIDER == "cohere" and not COHERE_API_KEY:
+    raise RuntimeError("FATAL: COHERE_API_KEY must be set when EMBEDDING_PROVIDER=cohere")
 
 if not DEBUG_MODE:
     storage_client = storage.Client()
@@ -80,14 +77,14 @@ MAX_FILE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
 def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
     """
-    画像の解像度がCohere API制限を超える場合、ピクセル数ベースでリサイズする。
+    画像の解像度が埋め込みAPIの制限を超える場合、ピクセル数ベースでリサイズする。
     """
     try:
         try:
-            img = Image.open(io.BytesIO(image_content))
+            img = PILImage.open(io.BytesIO(image_content))
             img.verify()
-            img = Image.open(io.BytesIO(image_content))
-        except Image.DecompressionBombError as e:
+            img = PILImage.open(io.BytesIO(image_content))
+        except PILImage.DecompressionBombError as e:
             print(f"    ⚠️  Decompression bomb warning for '{filename}': {e}")
             print(f"       File might be too large or corrupted. Skipping...")
             return None
@@ -117,7 +114,7 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         print(f"       File size: {original_size_mb:.1f}MB")
         
         if img.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', img.size, (255, 255, 255))
+            background = PILImage.new('RGB', img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[-1] if 'A' in img.mode else None)
             img = background
 
@@ -131,7 +128,7 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         print(f"    🔢 Calculated scale factor: {scale_factor:.3f}")
         print(f"       New resolution: {new_width}x{new_height} ({new_pixels:,} pixels)")
         
-        resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        resized_img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
         
         output = io.BytesIO()
         resized_img.save(output, format='JPEG', quality=90, optimize=True)
@@ -160,9 +157,6 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
 def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0, use_embed_v4: bool = False) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
     try:
-        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
-        print(f"    🔧 Using embedding model: {embed_model}")
-        
         if DEBUG_MODE and SIMULATE_MEMORY_ERROR_AT > 0 and file_index == SIMULATE_MEMORY_ERROR_AT:
             print(f"🧪 [DEBUG] Simulating memory error at file #{file_index}")
             raise MemoryError("Simulated out-of-memory event for debugging")
@@ -171,56 +165,17 @@ def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int 
             print(f"🧪 [DEBUG] Simulating processing error at file #{file_index}")
             raise Exception("Simulated processing error for debugging")
         
-        if DEBUG_MODE:
-            print(f"🧪 [DEBUG] Returning dummy embedding for '{filename}' (saves API cost)")
-            dimensions = 1024 if embed_model == "embed-multilingual-v3.0" else 1024
-            dummy_vec = np.random.normal(0, 1, dimensions)
-            dummy_vec = dummy_vec / np.linalg.norm(dummy_vec)
-            return dummy_vec
-        
-        text_response = co_client.embed(
-            texts=[filename],
-            model=embed_model,
-            input_type="search_document"
+        provider = get_embedding_provider()
+        embedding = provider.embed_multimodal(
+            text=filename,
+            image_bytes=image_bytes,
+            use_embed_v4=use_embed_v4,
         )
-        text_vec = np.array(text_response.embeddings[0])
-        
-        file_extension = filename.lower().split('.')[-1]
-        if file_extension in ['jpg', 'jpeg']:
-            mime_type = 'jpeg'
-        elif file_extension in ['png']:
-            mime_type = 'png'
-        elif file_extension in ['gif']:
-            mime_type = 'gif'
-        elif file_extension in ['webp']:
-            mime_type = 'webp'
-        else:
-            mime_type = 'jpeg'
-        
-        base64_string = base64.b64encode(image_bytes).decode("utf-8")
-        data_uri = f"data:image/{mime_type};base64,{base64_string}"
-        
-        image_response = co_client.embed(
-            images=[data_uri],
-            model=embed_model,
-            input_type="image"
-        )
-        image_vec = np.array(image_response.embeddings[0])
-        
-        dot_product = np.dot(text_vec, image_vec)
-        norm_text = np.linalg.norm(text_vec)
-        norm_image = np.linalg.norm(image_vec)
-        w = dot_product / (norm_text * norm_image)
-        
-        w = max(0, min(1, w))
-        
-        final_vec = w * text_vec + (1 - w) * image_vec
-        
-        print(f"    📊 Text-Image similarity: {w:.3f} for '{filename}'")
-        return final_vec
-        
+        return embedding
+    
     except Exception as e:
         print(f"    ⚠️  Warning: Could not generate multimodal embedding for '{filename}'. Skipping. Reason: {e}")
+        traceback.print_exc()
         return None
 
 def load_existing_embeddings(bucket_name: str, uuid: str) -> tuple:
@@ -412,7 +367,7 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
             try:
                 if DEBUG_MODE:
                     print("      🧪 [DEBUG] Using dummy image data (skipping actual download)")
-                    dummy_img = Image.new('RGB', (100, 100), color='red')
+                    dummy_img = PILImage.new('RGB', (100, 100), color='red')
                     output = io.BytesIO()
                     dummy_img.save(output, format='JPEG')
                     image_content = output.getvalue()
@@ -476,8 +431,9 @@ def main():
     
     print("🔧 Environment Variables:")
     env_vars = [
-        "GCS_BUCKET_NAME", "COHERE_API_KEY", "UUID", "DRIVE_URL", 
-        "USE_EMBED_V4", "BATCH_MODE", "BATCH_TASKS", "DEBUG_MODE"
+        "GCS_BUCKET_NAME", "GCP_PROJECT_ID", "GCP_REGION", "VERTEX_MULTIMODAL_MODEL",
+        "EMBEDDING_PROVIDER", "COHERE_API_KEY",
+        "UUID", "DRIVE_URL", "USE_EMBED_V4", "BATCH_MODE", "BATCH_TASKS", "DEBUG_MODE"
     ]
     for var in env_vars:
         value = os.getenv(var, "NOT_SET")

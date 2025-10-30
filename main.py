@@ -3,14 +3,13 @@ Image Search and Vectorization API
 
 This FastAPI application provides endpoints for:
 1. Triggering vectorization jobs for Google Drive images
-2. Searching similar images using Cohere embeddings
+2. Searching similar images using configured embedding providers
 """
 
 import os
 import traceback
 from typing import Dict, Optional, List
 
-import cohere
 import gspread
 from google.oauth2 import service_account
 from dotenv import load_dotenv
@@ -18,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from google.cloud import run_v2
 
+from embedding_providers import get_embedding_provider
 from search import ImageSearcher
 
 load_dotenv()
@@ -29,9 +29,11 @@ class Config:
     def __init__(self):
         self.gcs_bucket_name = os.getenv("GCS_BUCKET_NAME")
         self.gcp_project_id = os.getenv("GCP_PROJECT_ID")
-        self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.vectorize_job_name = os.getenv("VECTORIZE_JOB_NAME", "cohere-rag-vectorize-job")
         self.gcp_region = os.getenv("GCP_REGION", "asia-northeast1")
+        self.vertex_multimodal_model = os.getenv("VERTEX_MULTIMODAL_MODEL", "multimodalembedding@001")
+        self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "vertex_ai")
+        self.cohere_api_key = os.getenv("COHERE_API_KEY", "")
         # Google Sheets ID は環境変数で上書き可能。未指定時は ENVIRONMENT に応じて既定値を選ぶ
         dev_sheets_id = "1xPY1w4q9wm607hNK9Eb0D5v5ub7JFRihx9d-VOpHYOo"
         prod_sheets_id = "1pxSyLLZ-G3U3wwTYNgX_Qzijv7Mzn_6xSRIxGrM9l-4"
@@ -45,8 +47,7 @@ class Config:
         """Validate that all required environment variables are set."""
         required_vars = [
             ("GCS_BUCKET_NAME", self.gcs_bucket_name),
-            ("GCP_PROJECT_ID", self.gcp_project_id),
-            ("COHERE_API_KEY", self.cohere_api_key)
+            ("GCP_PROJECT_ID", self.gcp_project_id)
         ]
         
         missing_vars = [name for name, value in required_vars if not value]
@@ -61,7 +62,6 @@ app = FastAPI(
     version="1.0.0",
     description="API for vectorizing Google Drive images and performing similarity search"
 )
-cohere_client = cohere.Client(config.cohere_api_key)
 run_client = run_v2.JobsClient()
 
 class VectorizeRequest(BaseModel):
@@ -102,6 +102,19 @@ class JobService:
         self.config = config
         self.run_client = run_client
     
+    def _build_job_env(self, additional: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        env_vars = list(additional)
+        env_vars.extend([
+            {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
+            {"name": "GCP_PROJECT_ID", "value": self.config.gcp_project_id},
+            {"name": "GCP_REGION", "value": self.config.gcp_region},
+            {"name": "VERTEX_MULTIMODAL_MODEL", "value": self.config.vertex_multimodal_model},
+            {"name": "EMBEDDING_PROVIDER", "value": self.config.embedding_provider},
+        ])
+        if self.config.cohere_api_key:
+            env_vars.append({"name": "COHERE_API_KEY", "value": self.config.cohere_api_key})
+        return env_vars
+    
     def trigger_vectorization_job(self, uuid: str, drive_url: str, use_embed_v4: bool = False) -> Dict:
         """
         Trigger a Cloud Run Job for single UUID vectorization.
@@ -130,13 +143,13 @@ class JobService:
                 overrides=run_v2.RunJobRequest.Overrides(
                     container_overrides=[
                         run_v2.RunJobRequest.Overrides.ContainerOverride(
-                            env=[
-                                {"name": "UUID", "value": uuid},
-                                {"name": "DRIVE_URL", "value": drive_url},
-                                {"name": "USE_EMBED_V4", "value": str(use_embed_v4)},
-                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
-                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
-                            ]
+                            env=self._build_job_env(
+                                additional=[
+                                    {"name": "UUID", "value": uuid},
+                                    {"name": "DRIVE_URL", "value": drive_url},
+                                    {"name": "USE_EMBED_V4", "value": str(use_embed_v4)},
+                                ]
+                            )
                         )
                     ]
                 )
@@ -195,12 +208,12 @@ class JobService:
                 overrides=run_v2.RunJobRequest.Overrides(
                     container_overrides=[
                         run_v2.RunJobRequest.Overrides.ContainerOverride(
-                            env=[
-                                {"name": "BATCH_MODE", "value": "true"},
-                                {"name": "BATCH_TASKS", "value": tasks_json},
-                                {"name": "GCS_BUCKET_NAME", "value": self.config.gcs_bucket_name},
-                                {"name": "COHERE_API_KEY", "value": self.config.cohere_api_key}
-                            ]
+                            env=self._build_job_env(
+                                additional=[
+                                    {"name": "BATCH_MODE", "value": "true"},
+                                    {"name": "BATCH_TASKS", "value": tasks_json},
+                                ]
+                            )
                         )
                     ]
                 )
@@ -258,19 +271,12 @@ async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
 class SearchService:
     """Service for managing image search operations."""
     
-    def __init__(self, config: Config, cohere_client: cohere.Client):
+    def __init__(self, config: Config):
         self.config = config
-        self.cohere_client = cohere_client
     
-    def _embed_query(self, query: str, use_embed_v4: bool) -> List[float]:
-        embed_model = "embed-v4.0" if use_embed_v4 else "embed-multilingual-v3.0"
-        print(f"🔧 Using embedding model: {embed_model}")
-        response = self.cohere_client.embed(
-            texts=[query],
-            model=embed_model,
-            input_type="search_query"
-        )
-        return response.embeddings[0]
+    def _embed_query(self, query: str, use_embed_v4: bool):
+        provider = get_embedding_provider()
+        return provider.embed_text(text=query, use_embed_v4=use_embed_v4)
     
     def search_ranked(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
         """Return the top_k results ordered by similarity score."""
@@ -353,7 +359,7 @@ class SearchService:
 
 
 # Initialize services
-search_service = SearchService(config, cohere_client)
+search_service = SearchService(config)
 
 
 class SheetsService:
