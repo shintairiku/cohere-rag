@@ -4,6 +4,7 @@ fastapi
 uvicorn
 python-dotenv
 google-cloud-storage
+google-cloud-aiplatform
 google-api-python-client
 google-auth
 gspread
