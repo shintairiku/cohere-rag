@@ -279,7 +279,7 @@ def remove_deleted_files(existing_embeddings: list, keys_to_delete: set) -> list
         削除処理後のベクトルデータ
     """
     if not keys_to_delete:
-        return existing_embeddings
+        return existing_embeddings.copy()
     
     original_count = len(existing_embeddings)
     
