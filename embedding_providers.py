@@ -1,4 +1,5 @@
 import base64
+import inspect
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -65,6 +66,30 @@ class VertexEmbeddingProvider(EmbeddingProvider):
         vertexai.init(project=self.project_id, location=self.location)
         self._model = MultiModalEmbeddingModel.from_pretrained(self.model_name)
         self._dimension: Optional[int] = None
+        self._embedding_params = inspect.signature(self._model.get_embeddings).parameters
+
+    def _call_get_embeddings(self, *, image=None, text: Optional[str] = None):
+        kwargs = {}
+        if image is not None:
+            if "image" in self._embedding_params:
+                kwargs["image"] = image
+            elif "image_input" in self._embedding_params:
+                kwargs["image_input"] = image
+            else:
+                raise RuntimeError("Vertex AI client does not accept image input parameter")
+
+        if text is not None:
+            if "text" in self._embedding_params:
+                kwargs["text"] = text
+            elif "text_input" in self._embedding_params:
+                kwargs["text_input"] = text
+            else:
+                raise RuntimeError("Vertex AI client does not accept text input parameter")
+
+        if not kwargs:
+            raise ValueError("No arguments provided to Vertex AI get_embeddings")
+
+        return self._model.get_embeddings(**kwargs)
 
     def embed_text(
         self,
@@ -76,7 +101,7 @@ class VertexEmbeddingProvider(EmbeddingProvider):
             print("⚠️  USE_EMBED_V4 is ignored by the Vertex AI provider.")
 
         print(f"    🔧 {self.display_name}: Generating text embedding with model '{self.model_name}'")
-        embeddings = self._model.get_embeddings(text=text)
+        embeddings = self._call_get_embeddings(text=text)
         text_embedding = getattr(embeddings, "text_embedding", None)
         if not text_embedding:
             raise ValueError("Vertex AI returned empty text embedding")
@@ -113,7 +138,7 @@ class VertexEmbeddingProvider(EmbeddingProvider):
                 pass
 
         print(f"    🔧 {self.display_name}: Generating multimodal embedding with model '{self.model_name}'")
-        embeddings = self._model.get_embeddings(image=vertex_image, text=text)
+        embeddings = self._call_get_embeddings(image=vertex_image, text=text)
 
         image_embedding = getattr(embeddings, "image_embedding", None)
         if not image_embedding:
