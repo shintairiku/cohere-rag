@@ -42,7 +42,7 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 GCP_REGION = os.getenv("GCP_REGION", "asia-northeast1")
 VERTEX_MULTIMODAL_MODEL = os.getenv("VERTEX_MULTIMODAL_MODEL", "multimodalembedding@001")
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "vertex_ai").lower()
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "cohere").lower()
 MAX_IMAGE_SIZE_MB = 5
 CHECKPOINT_INTERVAL = 100
 
