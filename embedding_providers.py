@@ -79,7 +79,9 @@ class VertexEmbeddingProvider(EmbeddingProvider):
                 raise RuntimeError("Vertex AI client does not accept image input parameter")
 
         if text is not None:
-            if "text" in self._embedding_params:
+            if image is not None and "contextual_text" in self._embedding_params:
+                kwargs["contextual_text"] = text
+            elif "text" in self._embedding_params:
                 kwargs["text"] = text
             elif "text_input" in self._embedding_params:
                 kwargs["text_input"] = text
