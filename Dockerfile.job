@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the job script and its dependencies into the container.
 COPY img_meta_processor_gdrive.py .
 COPY drive_scanner.py .
+COPY embedding_providers.py .
 
 # Set the entrypoint for the container to run the job script.
 CMD ["python", "img_meta_processor_gdrive.py"]
-
