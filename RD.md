@@ -21,7 +21,7 @@
 | **UI/操作層** | Google Sheets | 類似画像検索（統合版） | 企業情報管理、ベクトル化のトリガー、検索インターフェース |
 |  | Google Apps Script | api\_caller.gs | スプレッドシート上の操作を検知し、バックエンドAPIを呼び出す |
 | **受付/API層** | Cloud Run Service | cohere-rag-main | GASからのHTTPリクエストを受け付ける常時待機型のAPIサーバー |
-| **バッチ処理層** | Cloud Run Job | cohere-rag-vectorize-job | 長時間実行されるベクトル化処理を担当するバッチジョブ |
+| **バッチ処理層** | Cloud Run Job | cohere-rag-vectorize-job (本番)<br>cohere-rag-vectorize-job-dev (開発) | 長時間実行されるベクトル化処理を担当するバッチジョブ |
 | **データ保存層** | Cloud Storage | embedding\_storage | 企業ごとにベクトル化されたJSONデータを保存する |
 | **外部サービス** | Google Drive | \- | 検索対象の元画像が保存されているストレージ |
 |  | Cohere API | \- | 画像・テキストのベクトル化（Embedding）を行うAIモデル |
