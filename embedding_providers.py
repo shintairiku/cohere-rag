@@ -99,6 +99,7 @@ class VertexEmbeddingProvider(EmbeddingProvider):
                 ])
             else:
                 text_param_candidates.extend([
+                    "contextual_text",
                     "text",
                     "text_input",
                     "prompt",
