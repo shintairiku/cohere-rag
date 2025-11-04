@@ -67,6 +67,8 @@ class VertexEmbeddingProvider(EmbeddingProvider):
         self._model = MultiModalEmbeddingModel.from_pretrained(self.model_name)
         self._dimension: Optional[int] = None
         self._embedding_params = inspect.signature(self._model.get_embeddings).parameters
+        param_list = ", ".join(self._embedding_params.keys())
+        print(f"    🧾 Vertex get_embeddings parameters: {param_list}")
 
     def _call_get_embeddings(self, *, image=None, text: Optional[str] = None):
         kwargs = {}
