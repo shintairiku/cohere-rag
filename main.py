@@ -93,6 +93,7 @@ class SearchRequest(BaseModel):
     exclude_files: List[str] = []
     use_embed_v4: bool = False
     top_n: Optional[int] = None
+    search_model: Optional[str] = None
 
 
 class JobService:
@@ -274,23 +275,80 @@ class SearchService:
     def __init__(self, config: Config):
         self.config = config
     
-    def _embed_query(self, query: str, use_embed_v4: bool):
-        provider = get_embedding_provider()
+    def _resolve_search_options(
+        self,
+        search_model: Optional[str],
+        use_embed_v4: bool,
+    ) -> tuple[str, bool, Optional[str]]:
+        """
+        Determine the embedding provider and vector file prefix based on requested model.
+        Returns (provider_name, use_embed_v4_flag, model_identifier_for_storage).
+        """
+        if not search_model:
+            default_provider = self.config.embedding_provider
+            model_identifier = None
+            return default_provider, use_embed_v4, model_identifier
+
+        normalized = search_model.strip().lower()
+
+        if normalized in {"vertex-ai", "vertex_ai", "vertex"}:
+            return "vertex_ai", False, "vertex-ai"
+
+        if normalized in {
+            "cohere-embed-v4.0",
+            "cohere_embed-v4.0",
+            "embed-v4.0",
+            "embed_v4.0",
+        }:
+            return "cohere", True, "cohere-embed-v4.0"
+
+        if normalized in {
+            "cohere-multilingual-v3.0",
+            "cohere_multilingual-v3.0",
+            "multilingual-v3.0",
+            "multilingual_v3.0",
+        }:
+            return "cohere", False, "cohere-multilingual-v3.0"
+
+        # 想定外の値はデフォルト設定にフォールバック
+        print(f"⚠️ Unknown search_model '{search_model}', falling back to default provider.")
+        default_provider = self.config.embedding_provider
+        return default_provider, use_embed_v4, None
+
+    def _embed_query(self, query: str, provider_name: str, use_embed_v4: bool):
+        provider = get_embedding_provider(provider_name=provider_name)
         return provider.embed_text(text=query, use_embed_v4=use_embed_v4)
     
-    def search_ranked(self, uuid: str, query: str, top_k: int, exclude_files: List[str] = None, use_embed_v4: bool = False) -> Dict:
+    def search_ranked(
+        self,
+        uuid: str,
+        query: str,
+        top_k: int,
+        exclude_files: List[str] = None,
+        use_embed_v4: bool = False,
+        search_model: Optional[str] = None,
+    ) -> Dict:
         """Return the top_k results ordered by similarity score."""
         print(f"🧠 [STANDARD] Generating embedding for query: '{query}'")
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from ranked search")
+
+        provider_name, effective_use_embed_v4, model_identifier = self._resolve_search_options(
+            search_model,
+            use_embed_v4,
+        )
         
         try:
-            searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
+            searcher = ImageSearcher(
+                uuid=uuid,
+                bucket_name=self.config.gcs_bucket_name,
+                model_name=model_identifier,
+            )
         except FileNotFoundError as e:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        query_embedding = self._embed_query(query, use_embed_v4)
+        query_embedding = self._embed_query(query, provider_name, effective_use_embed_v4)
         results = searcher.search_images(query_embedding=query_embedding, top_k=top_k, exclude_files=exclude_files)
         print(f"✅ Standard search completed. Returning {len(results)} results")
         
@@ -303,20 +361,30 @@ class SearchService:
         top_k: int,
         top_n: Optional[int] = None,
         exclude_files: List[str] = None,
-        use_embed_v4: bool = False
+        use_embed_v4: bool = False,
+        search_model: Optional[str] = None,
     ) -> Dict:
         """Return top_k results sampled from the ranked top_n pool."""
         print(f"🧠 [SHUFFLE] Generating embedding for query: '{query}'")
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from shuffle search")
+
+        provider_name, effective_use_embed_v4, model_identifier = self._resolve_search_options(
+            search_model,
+            use_embed_v4,
+        )
         
         try:
-            searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
+            searcher = ImageSearcher(
+                uuid=uuid,
+                bucket_name=self.config.gcs_bucket_name,
+                model_name=model_identifier,
+            )
         except FileNotFoundError as e:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        query_embedding = self._embed_query(query, use_embed_v4)
+        query_embedding = self._embed_query(query, provider_name, effective_use_embed_v4)
         pool_size = max(top_k * 3, 20) if top_n is None else max(top_n, top_k)
         pool = searcher.search_images(query_embedding=query_embedding, top_k=pool_size, exclude_files=exclude_files)
         
@@ -331,7 +399,13 @@ class SearchService:
         print(f"✅ Shuffle search completed. Returning {len(chosen)} results from pool size {len(pool)}")
         return {"query": query, "results": chosen}
     
-    def search_random_images(self, uuid: str, count: int, exclude_files: List[str] = None) -> Dict:
+    def search_random_images(
+        self,
+        uuid: str,
+        count: int,
+        exclude_files: List[str] = None,
+        search_model: Optional[str] = None,
+    ) -> Dict:
         """
         Search for random images.
         
@@ -345,9 +419,15 @@ class SearchService:
         """
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from random search")
-            
+
+        _, _, model_identifier = self._resolve_search_options(search_model, False)
+
         try:
-            searcher = ImageSearcher(uuid=uuid, bucket_name=self.config.gcs_bucket_name)
+            searcher = ImageSearcher(
+                uuid=uuid,
+                bucket_name=self.config.gcs_bucket_name,
+                model_name=model_identifier,
+            )
         except FileNotFoundError as e:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
@@ -542,6 +622,7 @@ def search_images_api(
     top_k: int = Query(5, ge=1, le=50, description="Number of results to return"),
     trigger: str = Query("スタンダード", description="Search type: 'スタンダード' | 'シャッフル' | 'ランダム' (互換: '類似画像検索'→シャッフル)"),
     top_n: Optional[int] = Query(None, ge=1, le=200, description="Candidate pool size for shuffle mode"),
+    search_model: Optional[str] = Query(None, description="Search embedding model identifier"),
 ):
     """Performs image search using the specified vector data."""
     print(f"🔍 Search API called: UUID={uuid}, trigger={trigger}, top_k={top_k}")
@@ -556,17 +637,17 @@ def search_images_api(
                 print("❌ Missing query parameter for standard search")
                 raise HTTPException(status_code=400, detail="Query 'q' is required for standard search.")
             
-            return search_service.search_ranked(uuid, q, top_k)
+            return search_service.search_ranked(uuid, q, top_k, search_model=search_model)
             
         elif normalized_trigger == "シャッフル":
             if not q:
                 print("❌ Missing query parameter for shuffle search")
                 raise HTTPException(status_code=400, detail="Query 'q' is required for shuffle search.")
             
-            return search_service.search_shuffle(uuid, q, top_k, top_n=top_n)
+            return search_service.search_shuffle(uuid, q, top_k, top_n=top_n, search_model=search_model)
             
         elif normalized_trigger == "ランダム":
-            return search_service.search_random_images(uuid, top_k)
+            return search_service.search_random_images(uuid, top_k, search_model=search_model)
             
         else:
             print(f"❌ Invalid trigger: {normalized_trigger}")
@@ -605,7 +686,8 @@ def search_images_post(request: SearchRequest):
                 request.q,
                 request.top_k,
                 request.exclude_files,
-                request.use_embed_v4
+                request.use_embed_v4,
+                request.search_model,
             )
             return result.get("results", [])
             
@@ -620,7 +702,8 @@ def search_images_post(request: SearchRequest):
                 request.top_k,
                 request.top_n,
                 request.exclude_files,
-                request.use_embed_v4
+                request.use_embed_v4,
+                request.search_model,
             )
             return result.get("results", [])
             
@@ -628,7 +711,8 @@ def search_images_post(request: SearchRequest):
             result = search_service.search_random_images(
                 request.uuid, 
                 request.top_k,
-                request.exclude_files
+                request.exclude_files,
+                request.search_model,
             )
             return result.get("results", [])
             

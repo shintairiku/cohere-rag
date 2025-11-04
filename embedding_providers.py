@@ -3,7 +3,7 @@ import inspect
 import os
 import tempfile
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Dict
 
 import numpy as np
 
@@ -255,30 +255,34 @@ class CohereEmbeddingProvider(EmbeddingProvider):
         return final_vec.astype(np.float32)
 
 
-_PROVIDER_CACHE: Optional[EmbeddingProvider] = None
+_PROVIDER_CACHE: Dict[str, EmbeddingProvider] = {}
 
 
-def get_embedding_provider(force_reload: bool = False) -> EmbeddingProvider:
+def get_embedding_provider(
+    force_reload: bool = False,
+    provider_name: Optional[str] = None,
+) -> EmbeddingProvider:
     """Return a cached embedding provider instance based on environment configuration."""
     global _PROVIDER_CACHE
 
-    if force_reload:
-        _PROVIDER_CACHE = None
+    resolved_provider = (provider_name or os.getenv("EMBEDDING_PROVIDER", "vertex_ai")).lower()
 
-    if _PROVIDER_CACHE is not None:
-        return _PROVIDER_CACHE
+    if force_reload and resolved_provider in _PROVIDER_CACHE:
+        del _PROVIDER_CACHE[resolved_provider]
 
-    provider_name = os.getenv("EMBEDDING_PROVIDER", "vertex_ai").lower()
+    if resolved_provider in _PROVIDER_CACHE:
+        return _PROVIDER_CACHE[resolved_provider]
 
-    if provider_name == "vertex_ai":
-        _PROVIDER_CACHE = VertexEmbeddingProvider()
-    elif provider_name == "cohere":
-        _PROVIDER_CACHE = CohereEmbeddingProvider()
+    if resolved_provider == "vertex_ai":
+        provider = VertexEmbeddingProvider()
+    elif resolved_provider == "cohere":
+        provider = CohereEmbeddingProvider()
     else:
-        raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider_name}")
+        raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {resolved_provider}")
 
-    print(f"🔗 Embedding provider initialized: {_PROVIDER_CACHE.display_name}")
-    return _PROVIDER_CACHE
+    _PROVIDER_CACHE[resolved_provider] = provider
+    print(f"🔗 Embedding provider initialized: {provider.display_name}")
+    return provider
 
 
 def _infer_file_suffix(filename: str) -> str:
