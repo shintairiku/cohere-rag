@@ -75,16 +75,46 @@ class VertexEmbeddingProvider(EmbeddingProvider):
                 kwargs["image"] = image
             elif "image_input" in self._embedding_params:
                 kwargs["image_input"] = image
+            elif "image_prompt" in self._embedding_params:
+                kwargs["image_prompt"] = image
             else:
                 raise RuntimeError("Vertex AI client does not accept image input parameter")
 
         if text is not None:
-            if image is not None and "contextual_text" in self._embedding_params:
-                kwargs["contextual_text"] = text
-            elif "text" in self._embedding_params:
-                kwargs["text"] = text
-            elif "text_input" in self._embedding_params:
-                kwargs["text_input"] = text
+            text_param_candidates = []
+            if image is not None:
+                text_param_candidates.extend([
+                    "contextual_text",
+                    "text",
+                    "text_input",
+                    "prompt",
+                    "text_prompt",
+                    "query",
+                    "text_query",
+                    "queries",
+                    "text_queries",
+                    "content",
+                ])
+            else:
+                text_param_candidates.extend([
+                    "text",
+                    "text_input",
+                    "prompt",
+                    "text_prompt",
+                    "query",
+                    "text_query",
+                    "queries",
+                    "text_queries",
+                    "content",
+                ])
+
+            for param_name in text_param_candidates:
+                if param_name in self._embedding_params:
+                    value = text
+                    if param_name in {"queries", "text_queries"}:
+                        value = [text]
+                    kwargs[param_name] = value
+                    break
             else:
                 raise RuntimeError("Vertex AI client does not accept text input parameter")
 
