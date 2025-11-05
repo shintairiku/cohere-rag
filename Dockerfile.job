@@ -1,24 +1,27 @@
-# Use the official lightweight Python image.
-# https://hub.docker.com/_/python
+# syntax=docker/dockerfile:1.7
+
 FROM python:3.12-slim
 
-# Allow statements and log messages to be sent straight to the logs
-# without being buffered.
-ENV PYTHONUNBUFFERED True
+ENV PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:/root/.local/bin:$PATH" \
+    UV_LINK_MODE=copy
 
-# Set the working directory in the container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 WORKDIR /app
 
-# Copy the requirements file into the container.
-COPY requirements.txt .
+COPY pyproject.toml ./
+COPY uv.lock* ./
 
-# Install the dependencies.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN bash -c 'test -f uv.lock && /root/.local/bin/uv sync --frozen --no-dev || /root/.local/bin/uv sync --no-dev'
 
-# Copy the job script and its dependencies into the container.
 COPY img_meta_processor_gdrive.py .
 COPY drive_scanner.py .
 COPY embedding_providers.py .
 
-# Set the entrypoint for the container to run the job script.
-CMD ["python", "img_meta_processor_gdrive.py"]
+CMD ["/root/.local/bin/uv", "run", "python", "img_meta_processor_gdrive.py"]

@@ -156,7 +156,7 @@ _GCS_BUCKET_NAME: your-bucket-name
 - `Dockerfile` - メインサービス用コンテナ
 - `Dockerfile.job` - ジョブ用コンテナ
 - `cloudbuild.yaml` - Cloud Build設定
-- `requirements.txt` - Python依存関係
+- `pyproject.toml` - Python依存関係とビルドメタデータ
 
 ### フロントエンド
 - `api_caller.gs` - Google Apps Script
