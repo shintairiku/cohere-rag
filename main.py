@@ -6,6 +6,7 @@ This FastAPI application provides endpoints for:
 2. Searching similar images using configured embedding providers
 """
 
+import html
 import os
 import traceback
 from typing import Dict, Optional, List
@@ -19,6 +20,11 @@ from google.cloud import run_v2
 
 from embedding_providers import get_embedding_provider
 from search import ImageSearcher
+
+try:
+    from google.cloud import translate_v2 as translate
+except ImportError:  # pragma: no cover
+    translate = None
 
 load_dotenv()
 
@@ -274,6 +280,40 @@ class SearchService:
     
     def __init__(self, config: Config):
         self.config = config
+        self._translate_client = self._init_translate_client()
+
+    def _init_translate_client(self):
+        if translate is None:
+            print("⚠️ google-cloud-translate がインストールされていないため、クエリ翻訳をスキップします。")
+            return None
+        try:
+            return translate.Client()
+        except Exception as exc:
+            print(f"⚠️ 翻訳クライアントの初期化に失敗しました: {exc}")
+            return None
+
+    def _translate_query(self, query: str) -> str:
+        if not query:
+            return query
+        if not self._translate_client:
+            return query
+
+        try:
+            result = self._translate_client.translate(query, target_language="en")
+            translated_text = result.get("translatedText") or ""
+            translated_text = html.unescape(translated_text)
+            source_lang = result.get("detectedSourceLanguage", "").lower()
+
+            if translated_text:
+                if source_lang and source_lang != "en":
+                    print(f"🌐 クエリを {source_lang} から英語に翻訳しました: '{translated_text}'")
+                else:
+                    print("🌐 クエリは英語と判断されたため、そのまま使用します。")
+                return translated_text
+        except Exception as exc:
+            print(f"⚠️ クエリ翻訳に失敗したため原文を使用します: {exc}")
+
+        return query
     
     def _resolve_search_options(
         self,
@@ -348,7 +388,8 @@ class SearchService:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        query_embedding = self._embed_query(query, provider_name, effective_use_embed_v4)
+        english_query = self._translate_query(query)
+        query_embedding = self._embed_query(english_query, provider_name, effective_use_embed_v4)
         results = searcher.search_images(query_embedding=query_embedding, top_k=top_k, exclude_files=exclude_files)
         print(f"✅ Standard search completed. Returning {len(results)} results")
         
@@ -384,7 +425,8 @@ class SearchService:
             print(f"❌ Vector data not found: {e}")
             raise HTTPException(status_code=404, detail=f"Vector data for UUID '{uuid}' not found.")
         
-        query_embedding = self._embed_query(query, provider_name, effective_use_embed_v4)
+        english_query = self._translate_query(query)
+        query_embedding = self._embed_query(english_query, provider_name, effective_use_embed_v4)
         pool_size = max(top_k * 3, 20) if top_n is None else max(top_n, top_k)
         pool = searcher.search_images(query_embedding=query_embedding, top_k=pool_size, exclude_files=exclude_files)
         

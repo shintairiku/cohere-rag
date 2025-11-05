@@ -13,3 +13,4 @@ numpy
 Pillow
 cohere
 google-cloud-pubsub  # <-- この行を追加または確認
+google-cloud-translate
