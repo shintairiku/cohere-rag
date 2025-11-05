@@ -79,6 +79,9 @@ class ImageSearcher:
         self.embeddings_matrix: Optional[np.ndarray] = None
         self.storage_client = StorageClient()
         self._loaded_blob_path: Optional[str] = None
+        self.total_entries_count: int = 0
+        self.corrupt_entries_count: int = 0
+        self.invalid_entries_count: int = 0
         
         self._load_data()
 
@@ -123,15 +126,45 @@ class ImageSearcher:
 
         try:
             json_data = blob.download_as_string()
-            self.embeddings_data = json.loads(json_data)
-            
-            if self.embeddings_data:
+            raw_data = json.loads(json_data)
+
+            if not isinstance(raw_data, list):
+                raise ValueError("Vector file format is invalid. Expected a list of entries.")
+
+            self.total_entries_count = len(raw_data)
+            self.corrupt_entries_count = 0
+            self.invalid_entries_count = 0
+
+            filtered_items: List[Dict] = []
+            embeddings_list: List[List[float]] = []
+
+            for item in raw_data:
+                if item.get("is_corrupt"):
+                    self.corrupt_entries_count += 1
+                    continue
+                embedding = item.get("embedding")
+                if not embedding:
+                    self.invalid_entries_count += 1
+                    continue
+                filtered_items.append(item)
+                embeddings_list.append(embedding)
+
+            self.embeddings_data = filtered_items
+
+            if embeddings_list:
                 # Create a NumPy matrix from the embeddings for efficient calculation
-                embeddings_list = [item['embedding'] for item in self.embeddings_data]
                 self.embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
                 print(f"✅ Successfully loaded and processed {len(self.embeddings_data)} vectors.")
             else:
-                print("⚠️  Warning: The vector file is empty.")
+                self.embeddings_matrix = np.array([], dtype=np.float32)
+                print("⚠️  Warning: No valid embeddings available after filtering.")
+
+            if self.corrupt_entries_count:
+                print(f"   ⚠️ Skipped {self.corrupt_entries_count} entries marked as corrupt.")
+            if self.invalid_entries_count:
+                print(f"   ⚠️ Skipped {self.invalid_entries_count} entries without embeddings.")
+            if self.total_entries_count and not self.corrupt_entries_count and not self.invalid_entries_count:
+                print(f"   ℹ️  Total entries loaded: {self.total_entries_count}")
 
         except FileNotFoundError:
             raise
