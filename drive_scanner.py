@@ -77,8 +77,8 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
         try:
             # まず、フォルダ内の全ファイルを取得してデバッグ
             debug_query = f"'{folder['id']}' in parents and trashed=false"
-            print(f"  -> Querying folder '{folder['path'] or 'root'}' (ID: {folder['id']})")
-            print(f"     Query: {debug_query}")
+            # print(f"  -> Querying folder '{folder['path'] or 'root'}' (ID: {folder['id']})")
+            # print(f"     Query: {debug_query}")
             
             debug_results = drive_service.files().list(
                 q=debug_query,
@@ -89,15 +89,15 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
             all_files = debug_results.get('files', [])
             
             print(f"  -> Folder '{folder['path'] or 'root'}' contains {len(all_files)} files:")
-            if all_files:
-                for f in all_files[:5]:  # 最初の5ファイルを表示
-                    print(f"     - {f['name']} (type: {f.get('mimeType', 'unknown')})")
-            else:
-                print(f"     (No files found - possible permission issue)")
+            # if all_files:
+            #     for f in all_files[:5]:  # 最初の5ファイルを表示
+            #         print(f"     - {f['name']} (type: {f.get('mimeType', 'unknown')})")
+            # else:
+            #     print(f"     (No files found - possible permission issue)")
             
             # 画像ファイルを検索
             query = f"'{folder['id']}' in parents and ({mime_query}) and trashed=false"
-            print(f"  -> Searching for images with query: {query}")
+            # print(f"  -> Searching for images with query: {query}")
             
             results = drive_service.files().list(
                 q=query,
@@ -114,7 +114,7 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
             print(f"     This might be a permission issue or the folder doesn't exist")
     
     print(f"  -> Found {len(all_images)} images in {len(all_folders)} folders")
-    if all_images:
-        print(f"  -> Sample images: {[img['name'] for img in all_images[:3]]}")
+    # if all_images:
+    #     print(f"  -> Sample images: {[img['name'] for img in all_images[:3]]}")
             
     return all_images
