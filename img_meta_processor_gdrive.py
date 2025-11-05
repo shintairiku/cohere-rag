@@ -5,6 +5,7 @@ import traceback
 import signal
 import sys
 from datetime import datetime
+from typing import Optional, Tuple
 
 import numpy as np
 from dotenv import load_dotenv
@@ -75,7 +76,7 @@ else:
 
 MAX_FILE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
-def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
+def resize_image_if_needed(image_content: bytes, filename: str) -> Tuple[Optional[bytes], Optional[str]]:
     """
     画像の解像度が埋め込みAPIの制限を超える場合、ピクセル数ベースでリサイズする。
     """
@@ -87,14 +88,14 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         except PILImage.DecompressionBombError as e:
             print(f"    ⚠️  Decompression bomb warning for '{filename}': {e}")
             print(f"       File might be too large or corrupted. Skipping...")
-            return None
+            return None, "decompression_bomb"
         except OSError as e:
             print(f"    ⚠️  Cannot identify image file '{filename}': {e}")
             print(f"       File might not be a valid image or is corrupted. Skipping...")
-            return None
+            return None, "cannot_identify"
         except Exception as e:
             print(f"    ⚠️  Unexpected error opening image '{filename}': {e}")
-            return None
+            return None, "open_error"
             
         original_width, original_height = img.size
         original_pixels = original_width * original_height
@@ -103,12 +104,12 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         if original_pixels > 100_000_000:
             print(f"    ⚠️  Extremely large image: {original_width}x{original_height} ({original_pixels:,} pixels)")
             print(f"       This image is too large to process safely. Skipping...")
-            return None
+            return None, "too_large"
         
         MAX_PIXELS = 2_300_000
         
         if original_pixels <= MAX_PIXELS:
-            return image_content
+            return image_content, None
         
         print(f"    📏 High resolution image detected: {original_width}x{original_height} ({original_pixels:,} pixels > {MAX_PIXELS:,} limit)")
         print(f"       File size: {original_size_mb:.1f}MB")
@@ -147,12 +148,12 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> bytes:
         print(f"       Resolution: {original_width}x{original_height} -> {new_width}x{new_height}")
         print(f"       Quality: {quality}")
         
-        return resized_data
+        return resized_data, None
         
     except Exception as e:
         print(f"    ❌ Resize Error: {e}")
         traceback.print_exc()
-        return None
+        return None, "resize_failure"
 
 def get_multimodal_embedding(image_bytes: bytes, filename: str, file_index: int = 0, use_embed_v4: bool = False) -> np.ndarray:
     """画像データとファイル名から重み付けされたベクトルを生成する"""
@@ -380,9 +381,19 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
                         _, done = downloader.next_chunk()
                     image_content = fh.getvalue()
                 
-                resized_content = resize_image_if_needed(image_content, file_info['name'])
+                resized_content, resize_error = resize_image_if_needed(image_content, file_info['name'])
                 if resized_content is None:
-                    print(f"      ⭕️  Skipping due to resize failure")
+                    reason_text = resize_error or "unknown_error"
+                    print(f"      ⭕️  Skipping due to resize failure ({reason_text})")
+                    error_entry = {
+                        "filename": file_info['name'],
+                        "filepath": file_info.get('webViewLink'),
+                        "folder_path": file_info.get('folder_path'),
+                        "embedding": None,
+                        "is_corrupt": True,
+                        "corrupt_reason": reason_text,
+                    }
+                    task_embeddings.append(error_entry)
                     continue
 
                 embedding = get_multimodal_embedding(resized_content, file_info['name'], i, use_embed_v4)
@@ -391,7 +402,8 @@ def process_single_uuid(uuid: str, drive_url: str, use_embed_v4: bool = False, a
                         "filename": file_info['name'],
                         "filepath": file_info['webViewLink'],
                         "folder_path": file_info['folder_path'],
-                        "embedding": embedding.tolist()
+                        "embedding": embedding.tolist(),
+                        "is_corrupt": False,
                     }
                     task_embeddings.append(result_data)
                     
