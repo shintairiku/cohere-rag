@@ -275,6 +275,7 @@ function callSearchApi(uuid, query, trigger, excludeFiles, topK) {
   const activeSheet = SpreadsheetApp.getActiveSheet();
   const sheetName = activeSheet.getName();
   const useEmbedV4 = sheetName.includes("embed-v4.0");
+  const searchModel = determineSearchModelForSheet_(sheetName);
   
   const payload = {
     "uuid": uuid,
@@ -282,7 +283,8 @@ function callSearchApi(uuid, query, trigger, excludeFiles, topK) {
     "top_k": topK,  // ★動的に渡す★
     "trigger": trigger,
     "exclude_files": excludeFiles || [],
-    "use_embed_v4": useEmbedV4
+    "use_embed_v4": useEmbedV4,
+    "search_model": searchModel
   };
   Logger.log(`[callSearchApi] URL: ${apiUrl}`);
   Logger.log(`[callSearchApi] Payload: ${JSON.stringify(payload)}`);
@@ -305,6 +307,25 @@ function callSearchApi(uuid, query, trigger, excludeFiles, topK) {
     Logger.log(`API Error Response (${responseCode}): ${responseText}`);
     throw new Error(`APIエラーが発生しました (コード: ${responseCode})`);
   }
+}
+
+/**
+ * シート名から検索時に利用するモデルを判定します。
+ * @param {string} sheetName - 判定対象のシート名
+ * @return {string} - APIに渡すモデル識別子
+ */
+function determineSearchModelForSheet_(sheetName) {
+  if (!sheetName) {
+    return "cohere-multilingual-v3.0";
+  }
+  const normalized = sheetName.toLowerCase();
+  if (normalized.includes("vertex")) {
+    return "vertex-ai";
+  }
+  if (normalized.includes("embed-v4.0")) {
+    return "cohere-embed-v4.0";
+  }
+  return "cohere-multilingual-v3.0";
 }
 
 

@@ -55,7 +55,10 @@ GCP_REGION=asia-northeast1
 COHERE_API_KEY=your-cohere-api-key
 
 # Cloud Run Job
+# 本番環境
 VECTORIZE_JOB_NAME=cohere-rag-vectorize-job
+# 開発環境
+# VECTORIZE_JOB_NAME=cohere-rag-vectorize-job-dev
 ENVIRONMENT=production
 ```
 
@@ -77,7 +80,8 @@ _AR_HOSTNAME: asia-northeast1-docker.pkg.dev
 _AR_PROJECT_ID: your-project-id
 _AR_REPOSITORY: cohere-rag
 _SERVICE_NAME: cohere-rag
-_JOB_NAME_VECTORIZE: cohere-rag-vectorize-job
+_JOB_NAME_VECTORIZE: cohere-rag-vectorize-job        # 本番トリガー
+# _JOB_NAME_VECTORIZE: cohere-rag-vectorize-job-dev  # 開発トリガー
 _DEPLOY_REGION: asia-northeast1
 _COHERE_API_KEY: your-cohere-api-key
 _GCS_BUCKET_NAME: your-bucket-name
@@ -153,7 +157,7 @@ _GCS_BUCKET_NAME: your-bucket-name
 - `Dockerfile` - メインサービス用コンテナ
 - `Dockerfile.job` - ジョブ用コンテナ
 - `cloudbuild.yaml` - Cloud Build設定
-- `requirements.txt` - Python依存関係
+- `pyproject.toml` - Python依存関係とビルドメタデータ
 
 ### フロントエンド
 - `api_caller.gs` - Google Apps Script

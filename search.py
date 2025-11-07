@@ -56,13 +56,14 @@ class ImageSearcher:
     Instances are expected to be created for each company.
     """
     
-    def __init__(self, uuid: str, bucket_name: Optional[str] = None):
+    def __init__(self, uuid: str, bucket_name: Optional[str] = None, model_name: Optional[str] = None):
         """
         Initializes the searcher for a given UUID.
         
         Args:
             uuid: The UUID of the company
             bucket_name: The GCS bucket name where vector data is stored
+            model_name: Optional model identifier used to narrow down vector files
             
         Raises:
             ValueError: If bucket_name is not provided
@@ -73,11 +74,23 @@ class ImageSearcher:
             
         self.uuid = uuid
         self.bucket_name = bucket_name
+        self.model_name = (model_name or "").strip().lower() or None
         self.embeddings_data: List[Dict] = []
         self.embeddings_matrix: Optional[np.ndarray] = None
         self.storage_client = StorageClient()
+        self._loaded_blob_path: Optional[str] = None
+        self.total_entries_count: int = 0
+        self.corrupt_entries_count: int = 0
+        self.invalid_entries_count: int = 0
         
         self._load_data()
+
+    def _candidate_blob_paths(self) -> List[str]:
+        """
+        現状の運用ではUUIDごとに単一ファイル（{uuid}.json）のみを期待する。
+        将来的にモデル別パスに拡張する場合はここで分岐を追加する。
+        """
+        return [f"{self.uuid}.json"]
 
     def _load_data(self) -> None:
         """
@@ -87,27 +100,71 @@ class ImageSearcher:
             FileNotFoundError: If the vector data file is not found
             Exception: If there's an error loading or parsing the data
         """
-        file_path = f"{self.uuid}.json"
+        bucket = self.storage_client.client.bucket(self.bucket_name)
+        blob = None
+        file_path = None
+
+        candidates = self._candidate_blob_paths()
+        if self.model_name:
+            print(f"   🔎 Requested model hint: {self.model_name}")
+
+        for candidate in candidates:
+            candidate_blob = bucket.blob(candidate)
+            if candidate_blob.exists():
+                blob = candidate_blob
+                file_path = candidate
+                break
+
+        if blob is None or file_path is None:
+            attempted = ", ".join(candidates)
+            print(f"❌ ERROR: Vector file not found for UUID '{self.uuid}'. Tried: {attempted}")
+            raise FileNotFoundError(f"Vector data for UUID '{self.uuid}' not found.")
+
+        self._loaded_blob_path = file_path
         print(f"🔍 Loading vector data for UUID '{self.uuid}' from gs://{self.bucket_name}/{file_path}")
+        print(f"   📁 Vector source: {file_path}")
 
         try:
-            bucket = self.storage_client.client.bucket(self.bucket_name)
-            blob = bucket.blob(file_path)
-
-            if not blob.exists():
-                print(f"❌ ERROR: Vector file not found at gs://{self.bucket_name}/{file_path}")
-                raise FileNotFoundError(f"Vector data for UUID '{self.uuid}' not found.")
-
             json_data = blob.download_as_string()
-            self.embeddings_data = json.loads(json_data)
-            
-            if self.embeddings_data:
+            raw_data = json.loads(json_data)
+
+            if not isinstance(raw_data, list):
+                raise ValueError("Vector file format is invalid. Expected a list of entries.")
+
+            self.total_entries_count = len(raw_data)
+            self.corrupt_entries_count = 0
+            self.invalid_entries_count = 0
+
+            filtered_items: List[Dict] = []
+            embeddings_list: List[List[float]] = []
+
+            for item in raw_data:
+                if item.get("is_corrupt"):
+                    self.corrupt_entries_count += 1
+                    continue
+                embedding = item.get("embedding")
+                if not embedding:
+                    self.invalid_entries_count += 1
+                    continue
+                filtered_items.append(item)
+                embeddings_list.append(embedding)
+
+            self.embeddings_data = filtered_items
+
+            if embeddings_list:
                 # Create a NumPy matrix from the embeddings for efficient calculation
-                embeddings_list = [item['embedding'] for item in self.embeddings_data]
                 self.embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
                 print(f"✅ Successfully loaded and processed {len(self.embeddings_data)} vectors.")
             else:
-                print("⚠️  Warning: The vector file is empty.")
+                self.embeddings_matrix = np.array([], dtype=np.float32)
+                print("⚠️  Warning: No valid embeddings available after filtering.")
+
+            if self.corrupt_entries_count:
+                print(f"   ⚠️ Skipped {self.corrupt_entries_count} entries marked as corrupt.")
+            if self.invalid_entries_count:
+                print(f"   ⚠️ Skipped {self.invalid_entries_count} entries without embeddings.")
+            if self.total_entries_count and not self.corrupt_entries_count and not self.invalid_entries_count:
+                print(f"   ℹ️  Total entries loaded: {self.total_entries_count}")
 
         except FileNotFoundError:
             raise
