@@ -1,8 +1,5 @@
 """
-Image Search Module
-
-This module provides functionality for loading vector data from Google Cloud Storage
-and performing similarity search and random search on image embeddings.
+Google Cloud Storageからベクトルデータを読み込み、類似検索やランダム検索を行うモジュール。
 """
 
 import os
@@ -15,21 +12,20 @@ from google.cloud import storage
 
 
 class StorageClient:
-    """Wrapper for Google Cloud Storage client with environment-based initialization."""
+    """環境に応じてGoogle Cloud Storageクライアントを初期化するラッパー。"""
     
     def __init__(self):
         self._client = self._get_storage_client()
     
     def _get_storage_client(self) -> storage.Client:
         """
-        Initializes a GCS client based on the environment.
+        実行環境に応じた認証方法でGCSクライアントを生成する。
         
-        Returns:
-            storage.Client: Configured GCS client
+        戻り値:
+            storage.Client: 初期化済みクライアント
         """
         environment = os.getenv("ENVIRONMENT", "local")
-        # NOTE: This key file is only used for local development.
-        # In production on Cloud Run, it uses the attached service account.
+        # ローカル開発時のみこの鍵ファイルを使用し、本番ではCloud Runのサービスアカウントを利用する。
         key_file = "marketing-automation-461305-2acf4965e0b0.json"
 
         if environment == "production":
@@ -46,28 +42,27 @@ class StorageClient:
     
     @property
     def client(self) -> storage.Client:
-        """Get the underlying storage client."""
+        """生成済みのStorageクライアントを返す。"""
         return self._client
 
 
 class ImageSearcher:
     """
-    A class to load vector data for a specific company (by UUID) and perform searches.
-    Instances are expected to be created for each company.
+    企業ごとのベクトルデータを読み込み、検索処理を提供するクラス。
     """
     
     def __init__(self, uuid: str, bucket_name: Optional[str] = None, model_name: Optional[str] = None):
         """
-        Initializes the searcher for a given UUID.
+        指定したUUID向けに検索を行うインスタンスを初期化する。
         
-        Args:
-            uuid: The UUID of the company
-            bucket_name: The GCS bucket name where vector data is stored
-            model_name: Optional model identifier used to narrow down vector files
+        引数:
+            uuid: 企業のUUID
+            bucket_name: ベクトルファイルを格納しているGCSバケット
+            model_name: 参照するモデル識別子（オプション）
             
-        Raises:
-            ValueError: If bucket_name is not provided
-            FileNotFoundError: If vector data file is not found
+        例外:
+            ValueError: bucket_nameが指定されていない場合
+            FileNotFoundError: 対応するベクトルファイルが存在しない場合
         """
         if not bucket_name:
             raise ValueError("GCS bucket name is not provided.")
@@ -94,11 +89,11 @@ class ImageSearcher:
 
     def _load_data(self) -> None:
         """
-        Loads the vector data from a JSON file in GCS.
+        GCS上のJSONベクトルファイルを読み込んでメモリに保持する。
         
-        Raises:
-            FileNotFoundError: If the vector data file is not found
-            Exception: If there's an error loading or parsing the data
+        例外:
+            FileNotFoundError: ベクトルファイルが存在しない場合
+            Exception: 読み込みまたはパースに失敗した場合
         """
         bucket = self.storage_client.client.bucket(self.bucket_name)
         blob = None
@@ -174,19 +169,19 @@ class ImageSearcher:
             raise Exception(f"Failed to load vector data for UUID {self.uuid}") from e
             
     def search_images(self, query_embedding: np.ndarray, top_k: int, exclude_files: Optional[List[str]] = None, top_n_pool: int = 25) -> List[Dict]:
-        top_n_pool = top_k
         """
-        Performs a similarity search using cosine similarity, then randomly selects from top N results.
+        コサイン類似度で上位候補を取得し、その中からランダム抽出でtop_k件を返す。
         
-        Args:
-            query_embedding: The vector of the search query
-            top_k: The number of results to return (randomly selected from top_n_pool)
-            exclude_files: Optional list of filenames to exclude from search candidates
-            top_n_pool: Number of top similar images to select from randomly (default: 50)
+        引数:
+            query_embedding: 検索クエリのベクトル
+            top_k: 返却件数
+            exclude_files: 候補から除外するファイル名リスト
+            top_n_pool: ランダム抽出の母数となる上位候補数
             
-        Returns:
-            List of dictionaries containing search results with similarity scores
+        戻り値:
+            類似度スコア付きの結果辞書リスト
         """
+        top_n_pool = top_k
         if self.embeddings_matrix is None or len(self.embeddings_matrix) == 0:
             print("⚠️ No embeddings data available for search")
             return []
@@ -259,14 +254,14 @@ class ImageSearcher:
 
     def random_image_search(self, count: int, exclude_files: Optional[List[str]] = None) -> List[Dict]:
         """
-        Performs a random search.
+        ベクトルデータからランダムに画像を選択する。
         
-        Args:
-            count: The number of random items to return
-            exclude_files: Optional list of filenames to exclude from search candidates
+        引数:
+            count: 返却する件数
+            exclude_files: 除外するファイル名リスト
             
-        Returns:
-            List of dictionaries containing randomly selected results
+        戻り値:
+            ランダムに抽出した結果辞書リスト
         """
         if not self.embeddings_data:
             print("⚠️ No embeddings data available for random search")

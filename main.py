@@ -1,9 +1,9 @@
 """
-Image Search and Vectorization API
+画像検索とベクトル化を提供するFastAPIアプリケーション。
 
-This FastAPI application provides endpoints for:
-1. Triggering vectorization jobs for Google Drive images
-2. Searching similar images using configured embedding providers
+主な機能:
+1. Google Drive上の画像ベクトル化ジョブの実行
+2. 埋め込みプロバイダを利用した類似画像検索
 """
 
 import html
@@ -30,7 +30,7 @@ load_dotenv()
 
 
 class Config:
-    """Configuration management for the application."""
+    """アプリケーション設定を読み込んで管理するクラス。"""
     
     def __init__(self):
         self.gcs_bucket_name = os.getenv("GCS_BUCKET_NAME")
@@ -50,7 +50,7 @@ class Config:
         self._validate_required_vars()
     
     def _validate_required_vars(self):
-        """Validate that all required environment variables are set."""
+        """必須の環境変数が揃っているか検証する。"""
         required_vars = [
             ("GCS_BUCKET_NAME", self.gcs_bucket_name),
             ("GCP_PROJECT_ID", self.gcp_project_id)
@@ -71,14 +71,14 @@ app = FastAPI(
 run_client = run_v2.JobsClient()
 
 class VectorizeRequest(BaseModel):
-    """Request model for vectorization endpoint."""
+    """ベクトル化エンドポイントで利用するリクエストモデル。"""
     uuid: str
     drive_url: str
     use_embed_v4: bool = False
 
 
 class VectorizeTask(BaseModel):
-    """Single vectorization task model."""
+    """バッチ処理用の単一ベクトル化タスク定義。"""
     uuid: str
     drive_url: str
     company_name: str = ""
@@ -86,12 +86,12 @@ class VectorizeTask(BaseModel):
 
 
 class BatchVectorizeRequest(BaseModel):
-    """Request model for batch vectorization endpoint."""
+    """バッチベクトル化エンドポイントのリクエストモデル。"""
     tasks: List[VectorizeTask]
 
 
 class SearchRequest(BaseModel):
-    """Request model for search endpoint."""
+    """検索エンドポイントのリクエストモデル。"""
     uuid: str
     q: Optional[str] = None
     top_k: int = 5
@@ -103,7 +103,7 @@ class SearchRequest(BaseModel):
 
 
 class JobService:
-    """Service for managing Cloud Run Jobs."""
+    """Cloud Runジョブの実行を管理するサービスクラス。"""
     
     def __init__(self, config: Config, run_client: run_v2.JobsClient):
         self.config = config
@@ -124,18 +124,18 @@ class JobService:
     
     def trigger_vectorization_job(self, uuid: str, drive_url: str, use_embed_v4: bool = False) -> Dict:
         """
-        Trigger a Cloud Run Job for single UUID vectorization.
+        単一UUID向けのCloud Runジョブを起動してベクトル化を実行する。
         
-        Args:
-            uuid: Company UUID
-            drive_url: Google Drive folder URL
-            use_embed_v4: Whether to use embed-v4.0 model
+        引数:
+            uuid: 企業のUUID
+            drive_url: 画像を格納したGoogle DriveフォルダのURL
+            use_embed_v4: embed-v4.0モデルを強制するかどうか
             
-        Returns:
-            Dict with job execution information
+        戻り値:
+            ジョブ実行情報を含む辞書
             
-        Raises:
-            Exception: If job execution fails
+        例外:
+            Exception: ジョブ起動に失敗した場合
         """
         print(f"API: Received request to start vectorization job for UUID: {uuid}")
         
@@ -187,16 +187,16 @@ class JobService:
 
     def trigger_batch_vectorization_job(self, tasks: List[VectorizeTask]) -> Dict:
         """
-        Trigger a Cloud Run Job for batch vectorization of multiple UUIDs.
+        複数UUIDをまとめて処理するCloud Runジョブを起動する。
         
-        Args:
-            tasks: List of vectorization tasks
+        引数:
+            tasks: ベクトル化タスクのリスト
             
-        Returns:
-            Dict with job execution information
+        戻り値:
+            ジョブ実行情報を含む辞書
             
-        Raises:
-            Exception: If job execution fails
+        例外:
+            Exception: ジョブ起動に失敗した場合
         """
         print(f"API: Received request to start batch vectorization job for {len(tasks)} tasks")
         
@@ -257,7 +257,7 @@ job_service = JobService(config, run_client)
 
 @app.post("/vectorize", status_code=202)
 async def trigger_vectorization_job(request: VectorizeRequest):
-    """Triggers a Cloud Run Job to perform vectorization."""
+    """指定されたUUIDのベクトル化ジョブをCloud Runで開始する。"""
     try:
         result = job_service.trigger_vectorization_job(request.uuid, request.drive_url, request.use_embed_v4)
         return result
@@ -267,7 +267,7 @@ async def trigger_vectorization_job(request: VectorizeRequest):
 
 @app.post("/vectorize-batch", status_code=202)
 async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
-    """Triggers a Cloud Run Job to perform batch vectorization."""
+    """複数UUID向けのベクトル化バッチジョブをCloud Runで開始する。"""
     try:
         result = job_service.trigger_batch_vectorization_job(request.tasks)
         return result
@@ -276,7 +276,7 @@ async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
 
 
 class SearchService:
-    """Service for managing image search operations."""
+    """画像検索処理をまとめたサービスクラス。"""
     
     def __init__(self, config: Config):
         self.config = config
@@ -321,8 +321,8 @@ class SearchService:
         use_embed_v4: bool,
     ) -> tuple[str, bool, Optional[str]]:
         """
-        Determine the embedding provider and vector file prefix based on requested model.
-        Returns (provider_name, use_embed_v4_flag, model_identifier_for_storage).
+        要求されたモデル名から埋め込みプロバイダとモデル識別子を決定する。
+        (provider_name, use_embed_v4_flag, model_identifier_for_storage) を返す。
         """
         if not search_model:
             default_provider = self.config.embedding_provider
@@ -368,7 +368,7 @@ class SearchService:
         use_embed_v4: bool = False,
         search_model: Optional[str] = None,
     ) -> Dict:
-        """Return the top_k results ordered by similarity score."""
+        """類似度でソートした上位top_k件の結果を返す。"""
         print(f"🧠 [STANDARD] Generating embedding for query: '{query}'")
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from ranked search")
@@ -405,7 +405,7 @@ class SearchService:
         use_embed_v4: bool = False,
         search_model: Optional[str] = None,
     ) -> Dict:
-        """Return top_k results sampled from the ranked top_n pool."""
+        """上位候補からランダム抽出したtop_k件の結果を返す。"""
         print(f"🧠 [SHUFFLE] Generating embedding for query: '{query}'")
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from shuffle search")
@@ -449,15 +449,15 @@ class SearchService:
         search_model: Optional[str] = None,
     ) -> Dict:
         """
-        Search for random images.
+        登録済み画像からランダムに結果を返す。
         
-        Args:
-            uuid: Company UUID
-            count: Number of random images to return
-            exclude_files: List of filenames to exclude from search results
+        引数:
+            uuid: 企業のUUID
+            count: 返却したい件数
+            exclude_files: 除外するファイル名リスト
             
-        Returns:
-            Dict with search results
+        戻り値:
+            検索結果を含む辞書
         """
         if exclude_files:
             print(f"📋 Excluding {len(exclude_files)} files from random search")
@@ -485,14 +485,14 @@ search_service = SearchService(config)
 
 
 class SheetsService:
-    """Service for managing Google Sheets operations."""
+    """Google Sheets連携を扱うサービスクラス。"""
     
     def __init__(self, config: Config):
         self.config = config
         self._gc = self._get_sheets_client()
     
     def _get_sheets_client(self) -> gspread.Client:
-        """Initialize Google Sheets client with appropriate credentials."""
+        """環境に応じた認証情報でGoogle Sheetsクライアントを初期化する。"""
         environment = os.getenv("ENVIRONMENT", "local")
         
         if environment == "production":
@@ -523,10 +523,10 @@ class SheetsService:
     
     def get_companies_for_auto_update(self) -> List[Dict]:
         """
-        Fetch companies that have both URL and checkbox=TRUE from Google Sheets.
+        Google SheetsからDrive URLありかつチェックボックスONの企業を抽出する。
         
-        Returns:
-            List of dictionaries with company information
+        戻り値:
+            企業情報を格納した辞書のリスト
         """
         try:
             spreadsheet = self._gc.open_by_key(self.config.google_sheets_id)
@@ -585,8 +585,7 @@ sheets_service = SheetsService(config)
 @app.post("/auto-update")
 async def auto_update_vectors():
     """
-    Endpoint for automatic vector file updates.
-    Fetches companies with checkbox=TRUE from Google Sheets and triggers vectorization.
+    チェックボックスONの企業を自動取得し、バッチベクトル化を実行するエンドポイント。
     """
     try:
         print("🔄 Starting automatic vector update process...")
@@ -666,7 +665,7 @@ def search_images_api(
     top_n: Optional[int] = Query(None, ge=1, le=200, description="Candidate pool size for shuffle mode"),
     search_model: Optional[str] = Query(None, description="Search embedding model identifier"),
 ):
-    """Performs image search using the specified vector data."""
+    """指定したUUIDのベクトルデータを使って画像検索を実行する。"""
     print(f"🔍 Search API called: UUID={uuid}, trigger={trigger}, top_k={top_k}")
     if q:
         print(f"   Query: '{q}'")
@@ -706,8 +705,7 @@ def search_images_api(
 @app.post("/search", response_model=List[Dict])
 def search_images_post(request: SearchRequest):
     """
-    Performs image search using the specified vector data (POST version).
-    Returns results as a list (compatible with api_caller.gs).
+    POSTボディで指定されたパラメータを用いて画像検索を実行し、結果を配列で返す。
     """
     print(f"🔍 Search API (POST) called: UUID={request.uuid}, trigger={request.trigger}, top_k={request.top_k}")
     if request.q:
@@ -772,5 +770,5 @@ def search_images_post(request: SearchRequest):
 
 @app.get("/")
 def health_check():
-    """Health check endpoint."""
+    """疎通確認用エンドポイント。"""
     return {"status": "ok", "service": "image-search-api", "version": "1.0.0"}

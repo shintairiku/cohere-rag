@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover
 
 
 class EmbeddingProvider(ABC):
-    """Abstract base class for embedding providers."""
+    """埋め込み生成プロバイダの共通インターフェース。"""
 
     provider_name: str
     display_name: str
@@ -35,7 +35,7 @@ class EmbeddingProvider(ABC):
         image_bytes: Optional[bytes],
         use_embed_v4: bool = False,
     ) -> np.ndarray:
-        """Generate an embedding that represents both text and image information."""
+        """テキストと画像を同時に表現するベクトルを生成する。"""
 
     @abstractmethod
     def embed_text(
@@ -44,11 +44,11 @@ class EmbeddingProvider(ABC):
         text: str,
         use_embed_v4: bool = False,
     ) -> np.ndarray:
-        """Generate an embedding for text-only input."""
+        """テキストのみを対象にベクトルを生成する。"""
 
 
 class VertexEmbeddingProvider(EmbeddingProvider):
-    """Vertex AI multi-modal embedding provider."""
+    """Vertex AIのマルチモーダル埋め込みを利用するプロバイダ。"""
 
     def __init__(self) -> None:
         if vertexai is None or MultiModalEmbeddingModel is None or VertexImage is None:
@@ -204,7 +204,7 @@ class VertexEmbeddingProvider(EmbeddingProvider):
 
 
 class CohereEmbeddingProvider(EmbeddingProvider):
-    """Cohere embed API provider."""
+    """Cohere Embed APIを利用するプロバイダ。"""
 
     def __init__(self) -> None:
         if cohere is None:
@@ -295,7 +295,7 @@ def get_embedding_provider(
     force_reload: bool = False,
     provider_name: Optional[str] = None,
 ) -> EmbeddingProvider:
-    """Return a cached embedding provider instance based on environment configuration."""
+    """環境設定に基づいて埋め込みプロバイダを取得（キャッシュ利用）。"""
     global _PROVIDER_CACHE
 
     resolved_provider = (provider_name or os.getenv("EMBEDDING_PROVIDER", "vertex_ai")).lower()
@@ -345,7 +345,7 @@ def _infer_mime_type(filename: str) -> str:
 
 
 def _align_dimensions(image_vec: np.ndarray, text_vec: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Ensure the two vectors share the same dimensionality."""
+    """画像とテキストのベクトル次元を揃える。"""
     if image_vec.shape == text_vec.shape:
         return image_vec, text_vec
 
