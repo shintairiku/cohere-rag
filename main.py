@@ -14,12 +14,13 @@ from typing import Dict, Optional, List
 import gspread
 from google.oauth2 import service_account
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from google.cloud import run_v2
 
 from embedding_providers import get_embedding_provider
 from search import ImageSearcher
+from drive_watch import DriveWatchManager, DriveNotificationProcessor
 
 try:
     from google.cloud import translate_v2 as translate
@@ -46,6 +47,9 @@ class Config:
         default_sheets_id = prod_sheets_id if os.getenv("ENVIRONMENT") == "production" else dev_sheets_id
         self.google_sheets_id = os.getenv("GOOGLE_SHEETS_ID", default_sheets_id)
         self.company_sheet_name = "会社一覧"
+        self.drive_watch_callback_url = os.getenv("DRIVE_WEBHOOK_URL")
+        ttl_value = os.getenv("DRIVE_WATCH_TTL_SECONDS", "").strip()
+        self.drive_watch_ttl_seconds = int(ttl_value or "86400")
         
         self._validate_required_vars()
     
@@ -100,6 +104,15 @@ class SearchRequest(BaseModel):
     use_embed_v4: bool = False
     top_n: Optional[int] = None
     search_model: Optional[str] = None
+
+
+class DriveWatchRequest(BaseModel):
+    """Google Driveの変更監視チャネル作成用リクエストモデル。"""
+    uuid: str
+    drive_url: str
+    company_name: str = ""
+    callback_url: Optional[str] = None
+    use_embed_v4: bool = False
 
 
 class JobService:
@@ -255,6 +268,31 @@ class JobService:
 job_service = JobService(config, run_client)
 
 
+def get_drive_watch_manager() -> DriveWatchManager:
+    """アプリ全体で共有するDrive監視マネージャを返す。"""
+    manager = getattr(app.state, "drive_watch_manager", None)
+    if manager is None:
+        manager = DriveWatchManager(
+            bucket_name=config.gcs_bucket_name,
+            default_callback_url=config.drive_watch_callback_url,
+            ttl_seconds=config.drive_watch_ttl_seconds
+        )
+        app.state.drive_watch_manager = manager
+    return manager
+
+
+def get_drive_notification_processor() -> DriveNotificationProcessor:
+    """Drive通知の処理器を初期化して返す。"""
+    processor = getattr(app.state, "drive_notification_processor", None)
+    if processor is None:
+        processor = DriveNotificationProcessor(
+            bucket_name=config.gcs_bucket_name,
+            job_service=job_service
+        )
+        app.state.drive_notification_processor = processor
+    return processor
+
+
 @app.post("/vectorize", status_code=202)
 async def trigger_vectorization_job(request: VectorizeRequest):
     """指定されたUUIDのベクトル化ジョブをCloud Runで開始する。"""
@@ -273,6 +311,62 @@ async def trigger_batch_vectorization_job(request: BatchVectorizeRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/drive/watch")
+async def register_drive_watch(request: DriveWatchRequest):
+    """Google Driveの変更通知チャネルを登録する。"""
+    manager = get_drive_watch_manager()
+    try:
+        state = manager.create_watch(
+            uuid=request.uuid,
+            drive_url=request.drive_url,
+            company_name=request.company_name,
+            callback_url=request.callback_url,
+            use_embed_v4=request.use_embed_v4
+        )
+        return {
+            "message": f"Drive watch registered for UUID {request.uuid}",
+            "channel_id": state.get("channel_id"),
+            "resource_id": state.get("resource_id"),
+            "expiration": state.get("expiration"),
+            "drive_id": state.get("drive_id"),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to register Drive watch: {exc}")
+
+
+@app.delete("/drive/watch/{uuid}")
+async def delete_drive_watch(uuid: str):
+    """登録済みのDrive通知チャネルを停止する。"""
+    manager = get_drive_watch_manager()
+    state = manager.stop_watch(uuid)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"No Drive watch found for UUID {uuid}")
+    return {
+        "message": f"Drive watch removed for UUID {uuid}",
+        "channel_id": state.get("channel_id"),
+        "resource_id": state.get("resource_id")
+    }
+
+
+@app.post("/drive/notifications", status_code=204)
+async def drive_notifications(request: Request):
+    """Google Drive APIからのpush通知を受信し、必要に応じてジョブを再実行する。"""
+    channel_id = request.headers.get("x-goog-channel-id")
+    resource_state = request.headers.get("x-goog-resource-state", "")
+    resource_id = request.headers.get("x-goog-resource-id", "")
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="Missing X-Goog-Channel-Id header.")
+
+    processor = get_drive_notification_processor()
+    try:
+        processor.handle_notification(channel_id, resource_state, resource_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to handle Drive notification: {exc}")
+    return Response(status_code=204)
 
 
 class SearchService:

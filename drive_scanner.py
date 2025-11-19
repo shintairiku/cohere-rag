@@ -24,7 +24,7 @@ def _get_google_credentials():
     return creds
 
 
-def _extract_folder_id(id_or_url: str) -> str:
+def extract_folder_id(id_or_url: str) -> str:
     """フォルダURLまたはIDから実際のフォルダID文字列だけを抽出する。"""
     if id_or_url.startswith('http'):
         match = re.search(r'/folders/([a-zA-Z0-9_-]+)', id_or_url)
@@ -43,7 +43,7 @@ def list_files_in_drive_folder(drive_url: str) -> List[Dict]:
     """指定フォルダ配下の全サブフォルダを走査し、画像ファイル情報を収集する。"""
     creds = _get_google_credentials()
     drive_service = build('drive', 'v3', credentials=creds)
-    folder_id = _extract_folder_id(drive_url)
+    folder_id = extract_folder_id(drive_url)
 
     folders_to_check = [{'id': folder_id, 'path': ''}]
     all_folders = list(folders_to_check)
