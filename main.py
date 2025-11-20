@@ -331,6 +331,7 @@ async def register_drive_watch(request: DriveWatchRequest):
             "resource_id": state.get("resource_id"),
             "expiration": state.get("expiration"),
             "drive_id": state.get("drive_id"),
+            "is_new_channel": state.get("is_new_channel", False),
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

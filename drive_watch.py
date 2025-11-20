@@ -130,6 +130,7 @@ class DriveWatchManager:
             raise ValueError("callback_url is required to register a Drive watch channel.")
 
         existing = self.store.load(uuid)
+        is_new_channel = existing is None
         if existing:
             print(f"ℹ️  Existing watch for UUID {uuid} is being replaced.")
             self.stop_watch(uuid)
@@ -178,8 +179,10 @@ class DriveWatchManager:
             "use_embed_v4": use_embed_v4,
         }
         self.store.save(state)
+        response_state = dict(state)
+        response_state["is_new_channel"] = is_new_channel
         print(f"✅ Drive watch created for UUID {uuid} (channel: {channel_id})")
-        return state
+        return response_state
 
     def stop_watch(self, uuid: str) -> Optional[Dict[str, Any]]:
         state = self.store.load(uuid)

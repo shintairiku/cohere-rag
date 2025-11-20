@@ -31,6 +31,7 @@ function onOpen() {
     .createMenu('✨画像検索メニュー')
     .addItem('選択行のベクトル化を実行', 'callVectorizeApi')
     .addItem('優先企業のベクトル化を一括実行', 'vectorizePriorityCompanies')
+    .addItem('優先企業の変更通知を登録', 'registerDriveWatchForPriorityCompanies')
     .addSeparator()
     .addItem('空のUUIDを一括生成', 'generateUuids')
     .addToUi();
