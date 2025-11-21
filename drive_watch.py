@@ -4,6 +4,7 @@ Google Driveの変更通知チャネルを管理し、通知に応じてベク�
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
@@ -204,7 +205,13 @@ class DriveWatchManager:
 class DriveNotificationProcessor:
     """Drive通知を処理し、必要に応じてベクトル化ジョブを再実行する。"""
 
-    def __init__(self, bucket_name: str, job_service):
+    def __init__(
+        self,
+        bucket_name: str,
+        job_service,
+        cooldown_seconds: Optional[int] = None,
+        verbose_logging: Optional[bool] = None,
+    ):
         if not bucket_name:
             raise ValueError("bucket_name is required.")
         self.bucket_name = bucket_name
@@ -212,32 +219,83 @@ class DriveNotificationProcessor:
         self.job_service = job_service
         self.drive_service = build("drive", "v3", credentials=_build_drive_credentials(), cache_discovery=False)
         self._parent_cache: Dict[str, List[str]] = {}
+        default_cooldown = os.getenv("DRIVE_WATCH_COOLDOWN_SECONDS", "").strip()
+        derived_cooldown = int(default_cooldown or "60")
+        self.cooldown_seconds = cooldown_seconds if cooldown_seconds is not None else derived_cooldown
+        if self.cooldown_seconds < 0:
+            self.cooldown_seconds = 0
+        env_verbose = os.getenv("DRIVE_WATCH_VERBOSE_LOGS", "true").strip().lower() not in {"false", "0", "no"}
+        self.verbose_logging = env_verbose if verbose_logging is None else verbose_logging
 
-    def handle_notification(self, channel_id: str, resource_state: str = "", resource_id: str = "") -> Dict[str, Any]:
+    def handle_notification(
+        self,
+        channel_id: str,
+        resource_state: str = "",
+        resource_id: str = "",
+        changed_types: str = "",
+    ) -> Dict[str, Any]:
         state = self.store.find_by_channel_id(channel_id)
         if not state:
             print(f"⚠️  No stored state found for channel {channel_id}. Ignoring notification.")
             return {"handled": False, "reason": "unknown_channel"}
-        print(f"📨 Drive notification received for UUID {state['uuid']} (state={resource_state}, resource={resource_id})")
+        self._log(
+            f"📨 Drive notification received for UUID {state['uuid']} "
+            f"(state={resource_state}, resource={resource_id}, changed={changed_types})"
+        )
 
         if resource_state == "sync":
             # 初回の同期リクエストは通知チャネル作成時に必ず送られる
             return {"handled": True, "changes_found": 0, "job_triggered": False, "status": "sync"}
 
+        if changed_types:
+            normalized_changed = {item.strip().lower() for item in changed_types.split(",") if item.strip()}
+            if normalized_changed and "content" not in normalized_changed:
+                self._log(
+                    f"🔇 Ignoring notification for UUID {state['uuid']} "
+                    f"because changed types do not include file content: {normalized_changed}"
+                )
+                return {"handled": True, "changes_found": 0, "job_triggered": False, "status": "filtered_changed_type"}
+
         changes_found = self._consume_change_feed(state)
         job_triggered = False
         if changes_found > 0:
+            now = time.time()
+            last_trigger = state.get("last_job_trigger_ts")
+            try:
+                last_trigger_ts = float(last_trigger) if last_trigger is not None else None
+            except (TypeError, ValueError):
+                last_trigger_ts = None
+            if self.cooldown_seconds and last_trigger_ts:
+                elapsed = now - last_trigger_ts
+                if elapsed < self.cooldown_seconds:
+                    print(
+                        f"⏳ Drive watch cooldown active for UUID {state['uuid']}: "
+                        f"{elapsed:.1f}s elapsed (cooldown {self.cooldown_seconds}s). Skipping job trigger."
+                    )
+                    return {
+                        "handled": True,
+                        "changes_found": changes_found,
+                        "job_triggered": False,
+                        "status": "cooldown",
+                    }
+
             print(f"🔁 Detected {changes_found} change(s) for UUID {state['uuid']}. Triggering vectorization job.")
             self.job_service.trigger_vectorization_job(
                 uuid=state["uuid"],
                 drive_url=state["drive_url"],
                 use_embed_v4=state.get("use_embed_v4", False)
             )
+            state["last_job_trigger_ts"] = now
+            self.store.save(state)
             job_triggered = True
         else:
-            print(f"ℹ️  No relevant changes found for UUID {state['uuid']}.")
+            self._log(f"ℹ️  No relevant changes found for UUID {state['uuid']}.")
 
         return {"handled": True, "changes_found": changes_found, "job_triggered": job_triggered}
+
+    def _log(self, message: str) -> None:
+        if self.verbose_logging:
+            print(message)
 
     def _consume_change_feed(self, state: Dict[str, Any]) -> int:
         token = state.get("page_token")

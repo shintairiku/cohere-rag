@@ -50,6 +50,11 @@ class Config:
         self.drive_watch_callback_url = os.getenv("DRIVE_WEBHOOK_URL")
         ttl_value = os.getenv("DRIVE_WATCH_TTL_SECONDS", "").strip()
         self.drive_watch_ttl_seconds = int(ttl_value or "86400")
+        cooldown_value = os.getenv("DRIVE_WATCH_COOLDOWN_SECONDS", "").strip()
+        cooldown_seconds = int(cooldown_value or "60")
+        self.drive_watch_cooldown_seconds = cooldown_seconds if cooldown_seconds >= 0 else 0
+        verbose_flag = os.getenv("DRIVE_WATCH_VERBOSE_LOGS", "true").strip().lower()
+        self.drive_watch_verbose_logs = verbose_flag not in {"false", "0", "no"}
         
         self._validate_required_vars()
     
@@ -287,7 +292,9 @@ def get_drive_notification_processor() -> DriveNotificationProcessor:
     if processor is None:
         processor = DriveNotificationProcessor(
             bucket_name=config.gcs_bucket_name,
-            job_service=job_service
+            job_service=job_service,
+            cooldown_seconds=config.drive_watch_cooldown_seconds,
+            verbose_logging=config.drive_watch_verbose_logs,
         )
         app.state.drive_notification_processor = processor
     return processor
@@ -359,12 +366,13 @@ async def drive_notifications(request: Request):
     channel_id = request.headers.get("x-goog-channel-id")
     resource_state = request.headers.get("x-goog-resource-state", "")
     resource_id = request.headers.get("x-goog-resource-id", "")
+    changed_types = request.headers.get("x-goog-changed", "")
     if not channel_id:
         raise HTTPException(status_code=400, detail="Missing X-Goog-Channel-Id header.")
 
     processor = get_drive_notification_processor()
     try:
-        processor.handle_notification(channel_id, resource_state, resource_id)
+        processor.handle_notification(channel_id, resource_state, resource_id, changed_types)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to handle Drive notification: {exc}")
     return Response(status_code=204)
