@@ -146,3 +146,101 @@ function triggerVectorizeJob_(uuid, driveUrl, useEmbedV4) {
   const responseText = response.getContentText() || "";
   throw new Error(`ベクトル化APIエラー (コード: ${responseCode}) ${responseText}`);
 }
+
+/**
+ * 優先企業の設定をAPIに送信し、drive-watch-statesへ保存させる。
+ */
+function savePriorityCompanyStates() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
+  if (!sheet) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    ui.alert('優先企業にチェックが入った行がありません。');
+    return;
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
+  const values = range.getValues();
+  const companies = [];
+  const errors = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const rowNumber = i + 2;
+    const row = values[i];
+    const isPriority = row[Config.COMPANY_LIST.PRIORITY_COL - 1];
+    if (isPriority !== true) {
+      continue;
+    }
+
+    let uuid = row[Config.COMPANY_LIST.UUID_COL - 1];
+    const companyName = row[Config.COMPANY_LIST.NAME_COL - 1];
+    const driveUrl = row[Config.COMPANY_LIST.DRIVE_URL_COL - 1];
+    if (!companyName || !driveUrl) {
+      errors.push(`Row ${rowNumber}: 会社名またはドライブURLが空です。`);
+      continue;
+    }
+    if (!uuid) {
+      uuid = Utilities.getUuid();
+      sheet.getRange(rowNumber, Config.COMPANY_LIST.UUID_COL).setValue(uuid);
+    }
+    const useEmbedV4 = companyName.indexOf("embed-v4.0") !== -1;
+    companies.push({
+      uuid: uuid,
+      company_name: companyName,
+      drive_url: driveUrl,
+      use_embed_v4: useEmbedV4
+    });
+  }
+
+  if (companies.length === 0) {
+    ui.alert('優先企業にチェックが入っている有効な行がありません。');
+    return;
+  }
+
+  try {
+    const result = syncCompanyStates_(companies);
+    let message = `保存に成功: ${result.saved_count || 0}件`;
+    if ((result.error_count || 0) > 0) {
+      message += `\n失敗: ${result.error_count}件`;
+      if (result.errors && result.errors.length) {
+        const detail = result.errors.slice(0, 5).map(err => `${err.uuid || 'unknown'}: ${err.error || err}`);
+        message += `\n例: ${detail.join(", ")}`;
+      }
+    }
+    if (errors.length > 0) {
+      message += `\nスキップ: ${errors.length}件`;
+    }
+    ui.alert(message);
+  } catch (err) {
+    ui.alert(`保存に失敗しました: ${err.message}`);
+  }
+}
+
+function syncCompanyStates_(companies) {
+  const payload = JSON.stringify({ companies: companies });
+  const params = {
+    method: "post",
+    contentType: "application/json",
+    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+    payload: payload,
+    muteHttpExceptions: true,
+  };
+  const apiUrl = `${Config.API_BASE_URL}/drive/company-states`;
+  const response = UrlFetchApp.fetch(apiUrl, params);
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText() || "";
+  if (responseCode >= 200 && responseCode < 300) {
+    try {
+      return JSON.parse(responseText);
+    } catch (err) {
+      return { saved_count: companies.length, error_count: 0 };
+    }
+  }
+  throw new Error(`APIエラー (コード: ${responseCode}) ${responseText}`);
+}
