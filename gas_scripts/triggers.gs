@@ -29,6 +29,7 @@ function normalizeTriggerValue(triggerValue) {
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('✨画像検索メニュー')
+    //.addItem('優先企業のDrive/DB連携', 'syncDriveAndDbForPriorityCompanies')
     .addItem('優先企業の変更通知を登録', 'registerDriveWatchForPriorityCompanies')
     .addItem('優先企業の監視データを保存', 'savePriorityCompanyStates')
     .addToUi();

@@ -244,3 +244,102 @@ function syncCompanyStates_(companies) {
   }
   throw new Error(`APIエラー (コード: ${responseCode}) ${responseText}`);
 }
+
+/**
+ * 優先企業のDrive watch登録と企業リスト同期をまとめて実行する。
+ */
+function syncDriveAndDbForPriorityCompanies() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
+  if (!sheet) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    ui.alert('優先企業にチェックが入った行がありません。');
+    return;
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
+  const values = range.getValues();
+
+  const companiesForState = [];
+  let registerSuccess = 0;
+  const registerErrors = [];
+  const validationErrors = [];
+
+  ss.toast('Drive/DB同期を開始します...', '処理中', -1);
+
+  for (let i = 0; i < values.length; i++) {
+    const rowNumber = i + 2;
+    const row = values[i];
+    const isPriority = row[Config.COMPANY_LIST.PRIORITY_COL - 1];
+    if (isPriority !== true) continue;
+
+    let uuid = row[Config.COMPANY_LIST.UUID_COL - 1];
+    const companyName = row[Config.COMPANY_LIST.NAME_COL - 1];
+    const driveUrl = row[Config.COMPANY_LIST.DRIVE_URL_COL - 1];
+
+    if (!companyName || !driveUrl) {
+      validationErrors.push(`Row ${rowNumber}: 会社名またはドライブURLが空です。`);
+      continue;
+    }
+
+    if (!uuid) {
+      uuid = Utilities.getUuid();
+      sheet.getRange(rowNumber, Config.COMPANY_LIST.UUID_COL).setValue(uuid);
+    }
+
+    const useEmbedV4 = companyName.indexOf("embed-v4.0") !== -1;
+
+    try {
+      registerDriveWatch_(uuid, driveUrl, companyName, useEmbedV4);
+      registerSuccess++;
+    } catch (err) {
+      registerErrors.push(`Row ${rowNumber} (${companyName}): ${err.message}`);
+      continue;
+    }
+
+    companiesForState.push({
+      uuid: uuid,
+      company_name: companyName,
+      drive_url: driveUrl,
+      use_embed_v4: useEmbedV4
+    });
+  }
+
+  let stateResult = null;
+  if (companiesForState.length > 0) {
+    try {
+      stateResult = syncCompanyStates_(companiesForState);
+    } catch (err) {
+      registerErrors.push(`企業リスト保存中にエラー: ${err.message}`);
+    }
+  }
+
+  ss.toast('Drive/DB同期が完了しました。', '完了', 5);
+
+  let message = `Driveチャネル登録 成功: ${registerSuccess}件`;
+  if (registerErrors.length > 0) {
+    message += `\n登録エラー: ${registerErrors.length}件`;
+  }
+  if (stateResult) {
+    message += `\nGCS保存 成功: ${stateResult.saved_count || 0}件`;
+    if ((stateResult.error_count || 0) > 0) {
+      message += `, 失敗: ${stateResult.error_count}件`;
+    }
+  }
+  if (validationErrors.length > 0) {
+    message += `\nスキップ: ${validationErrors.length}件`;
+  }
+
+  const detail = [].concat(registerErrors.slice(0, 5), validationErrors.slice(0, 5));
+  if (detail.length > 0) {
+    message += `\n例: ${detail.join("; ")}`;
+  }
+
+  ui.alert(message);
+}
