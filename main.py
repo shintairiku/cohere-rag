@@ -120,6 +120,19 @@ class DriveWatchRequest(BaseModel):
     use_embed_v4: bool = False
 
 
+class CompanyState(BaseModel):
+    """スプレッドシートから送信される企業設定。"""
+    uuid: str
+    drive_url: str
+    company_name: str = ""
+    use_embed_v4: bool = False
+
+
+class CompanyStateBatchRequest(BaseModel):
+    """企業設定をまとめて保存するリクエスト。"""
+    companies: List[CompanyState]
+
+
 class JobService:
     """Cloud Runジョブの実行を管理するサービスクラス。"""
     
@@ -339,6 +352,7 @@ async def register_drive_watch(request: DriveWatchRequest):
             "expiration": state.get("expiration"),
             "drive_id": state.get("drive_id"),
             "is_new_channel": state.get("is_new_channel", False),
+            "drive_channel_created": state.get("drive_channel_created", False),
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -357,6 +371,37 @@ async def delete_drive_watch(uuid: str):
         "message": f"Drive watch removed for UUID {uuid}",
         "channel_id": state.get("channel_id"),
         "resource_id": state.get("resource_id")
+    }
+
+
+@app.post("/drive/company-states")
+async def save_company_states(request: CompanyStateBatchRequest):
+    """スプレッドシートから送信された企業設定を保存する。"""
+    manager = get_drive_watch_manager()
+    saved: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for company in request.companies:
+        try:
+            state = manager.save_company_state_only(
+                uuid=company.uuid,
+                drive_url=company.drive_url,
+                company_name=company.company_name,
+                use_embed_v4=company.use_embed_v4,
+            )
+            saved.append({
+                "uuid": company.uuid,
+                "drive_id": state.get("drive_id"),
+                "folder_id": state.get("folder_id"),
+            })
+        except Exception as exc:
+            errors.append({"uuid": company.uuid, "error": str(exc)})
+    if not saved and errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+    return {
+        "saved_count": len(saved),
+        "saved": saved,
+        "error_count": len(errors),
+        "errors": errors,
     }
 
 
