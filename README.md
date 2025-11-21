@@ -119,6 +119,31 @@ _GCS_BUCKET_NAME: your-bucket-name
 2. C列で「類似画像検索」または「ランダム画像検索」を選択
 3. 自動的にAPIが呼び出され、結果が表示
 
+## 🔔 Google Driveの変更検知フロー
+
+- ドライブフォルダを定期的に走査する代わりに、Google Drive APIの`changes.watch`を利用して差分通知を受け取ります。
+- Cloud Runサービスには以下の新規エンドポイントを用意しています。
+  - `POST /drive/watch`: UUID・フォルダURLを指定して通知チャネルを作成
+  - `DELETE /drive/watch/{uuid}`: 既存チャネルの停止
+  - `POST /drive/notifications`: Googleからのpush通知を受け取るWebhook（ヘッダー `X-Goog-*` を処理）
+- 環境変数`DRIVE_WEBHOOK_URL`に、外部からアクセス可能なWebhook URL（例: `https://<service-url>/drive/notifications`）を設定してください。設定しない場合はAPIリクエストで`callback_url`を直接渡します。
+- 監視状態はGCSバケット`drive-watch-states/`以下に保存され、通知を受けると該当UUIDのベクトル化ジョブを自動再実行してDB（GCS JSON）を最新化します。
+
+### 監視チャネル作成例
+
+```bash
+curl -X POST https://<service-url>/drive/watch \
+  -H "Content-Type: application/json" \
+  -d '{
+        "uuid": "company-uuid",
+        "drive_url": "https://drive.google.com/drive/folders/xxxx",
+        "company_name": "sample corp",
+        "use_embed_v4": false
+      }'
+```
+
+通知を受けるとサービス側でDrive APIの変更フィードを読み取り、指定フォルダ配下に追加・削除があった場合のみCloud Runジョブを再実行します。これによりDriveフォルダの定期スキャン無しでDBとDriveの状態を一致させられます。
+
 ## 🏗️ システムアーキテクチャ
 
 ### コンポーネント構成
