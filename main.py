@@ -9,7 +9,7 @@
 import html
 import os
 import traceback
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 
 import gspread
 from google.oauth2 import service_account
