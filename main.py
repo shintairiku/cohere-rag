@@ -133,6 +133,11 @@ class CompanyStateBatchRequest(BaseModel):
     companies: List[CompanyState]
 
 
+class ReRegisterRequest(BaseModel):
+    """チャネルの再登録リクエスト。"""
+    uuids: Optional[List[str]] = None
+
+
 class JobService:
     """Cloud Runジョブの実行を管理するサービスクラス。"""
     
@@ -403,6 +408,19 @@ async def save_company_states(request: CompanyStateBatchRequest):
         "error_count": len(errors),
         "errors": errors,
     }
+
+
+@app.post("/drive/watch/re-register")
+async def re_register_drive_channels(request: ReRegisterRequest):
+    """既存企業のチャネルを共有ドライブ単位で再登録する。"""
+    manager = get_drive_watch_manager()
+    try:
+        result = manager.re_register_companies(request.uuids)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to re-register Drive channels: {exc}")
 
 
 @app.post("/drive/notifications", status_code=204)

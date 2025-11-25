@@ -259,8 +259,12 @@ class DriveWatchManager:
         print(f"📝 Saved company state for UUID {uuid} (drive_id={drive_id})")
         return company_state
 
-    def _ensure_drive_channel(self, drive_id: Optional[str], callback_url: str) -> Dict[str, Any]:
+    def _ensure_drive_channel(self, drive_id: Optional[str], callback_url: str, force: bool = False) -> Dict[str, Any]:
         existing = self.store.load_drive_state(drive_id)
+        if existing and force:
+            self._stop_drive_channel(existing)
+            self.store.delete_drive_state(drive_id)
+            existing = None
         if existing:
             existing["is_new_channel"] = False
             return existing
@@ -336,6 +340,36 @@ class DriveWatchManager:
             if status not in (404, 410):
                 raise
             print(f"⚠️  Channel stop returned {status} for drive {drive_state.get('drive_id')} ({status}), continuing cleanup.")
+
+    def re_register_companies(self, uuids: Optional[List[str]] = None) -> Dict[str, Any]:
+        target_callback = self.default_callback_url
+        if not target_callback:
+            raise ValueError("callback_url is required to re-register Drive watch channels.")
+        all_states = self.store.list_all_company_states()
+        if uuids:
+            uuids_set = set(uuids)
+            company_states = [state for state in all_states if state.get("uuid") in uuids_set]
+        else:
+            company_states = all_states
+
+        if not company_states:
+            return {"processed_drive_count": 0, "details": []}
+
+        grouped: Dict[Optional[str], List[str]] = {}
+        for state in company_states:
+            drive_id = state.get("drive_id")
+            grouped.setdefault(drive_id, []).append(state["uuid"])
+
+        details = []
+        for drive_id, uuid_list in grouped.items():
+            drive_state = self._ensure_drive_channel(drive_id, target_callback, force=True)
+            details.append({
+                "drive_id": drive_id,
+                "channel_id": drive_state.get("channel_id"),
+                "uuid_count": len(uuid_list),
+                "uuids": uuid_list
+            })
+        return {"processed_drive_count": len(details), "details": details}
 
 
 class DriveNotificationProcessor:
