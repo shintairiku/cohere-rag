@@ -271,7 +271,7 @@ function syncDriveAndDbForPriorityCompanies() {
   const registerErrors = [];
   const validationErrors = [];
 
-  ss.toast('Drive/DB同期を開始します...', '処理中', -1);
+  ss.toast('連携処理を開始します...', '処理中', -1);
 
   for (let i = 0; i < values.length; i++) {
     const rowNumber = i + 2;
@@ -320,14 +320,14 @@ function syncDriveAndDbForPriorityCompanies() {
     }
   }
 
-  ss.toast('Drive/DB同期が完了しました。', '完了', 5);
+  ss.toast('連携処理が完了しました。', '完了', 5);
 
-  let message = `Driveチャネル登録 成功: ${registerSuccess}件`;
+  let message = `変更通知登録 成功: ${registerSuccess}件`;
   if (registerErrors.length > 0) {
-    message += `\n登録エラー: ${registerErrors.length}件`;
+    message += `\n登録に失敗: ${registerErrors.length}件`;
   }
   if (stateResult) {
-    message += `\nGCS保存 成功: ${stateResult.saved_count || 0}件`;
+    message += `\n企業リスト保存 成功: ${stateResult.saved_count || 0}件`;
     if ((stateResult.error_count || 0) > 0) {
       message += `, 失敗: ${stateResult.error_count}件`;
     }
