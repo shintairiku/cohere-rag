@@ -4,6 +4,7 @@ Google Driveの変更通知チャネルを管理し、通知に応じてベク�
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
@@ -42,7 +43,7 @@ def _build_storage_client():
 
 
 class DriveWatchStateStore:
-    """GCS上にDrive変更監視チャネルの状態を保存・管理する。"""
+    """GCS上にDrive変更監視チャネルと企業設定の状態を保存・管理する。"""
 
     def __init__(self, bucket_name: str, prefix: str = WATCH_STATE_PREFIX):
         if not bucket_name:
@@ -53,24 +54,29 @@ class DriveWatchStateStore:
         prefix = (prefix or "").strip("/")
         self.prefix = f"{prefix}/" if prefix else ""
 
-    def _blob_path(self, uuid: str) -> str:
-        return f"{self.prefix}{uuid}.json"
+    def _blob_path(self, key: str) -> str:
+        return f"{self.prefix}{key}.json"
 
-    def save(self, state: Dict[str, Any]) -> None:
-        blob = self.bucket.blob(self._blob_path(state["uuid"]))
+    def _write_state(self, key: str, state: Dict[str, Any]) -> None:
+        blob = self.bucket.blob(self._blob_path(key))
         blob.upload_from_string(
             json.dumps(state, ensure_ascii=False, indent=2),
             content_type="application/json"
         )
 
-    def load(self, uuid: str) -> Optional[Dict[str, Any]]:
-        blob = self.bucket.blob(self._blob_path(uuid))
+    def save(self, state: Dict[str, Any]) -> None:
+        if "uuid" not in state:
+            raise ValueError("state must include 'uuid'")
+        self._write_state(state["uuid"], state)
+
+    def load(self, key: str) -> Optional[Dict[str, Any]]:
+        blob = self.bucket.blob(self._blob_path(key))
         if not blob.exists():
             return None
         return json.loads(blob.download_as_text())
 
-    def delete(self, uuid: str) -> None:
-        blob = self.bucket.blob(self._blob_path(uuid))
+    def delete(self, key: str) -> None:
+        blob = self.bucket.blob(self._blob_path(key))
         if blob.exists():
             blob.delete()
 
@@ -84,15 +90,74 @@ class DriveWatchStateStore:
                 continue
         return states
 
-    def find_by_channel_id(self, channel_id: str) -> Optional[Dict[str, Any]]:
+    def save_company_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        state = dict(state)
+        state.pop("is_drive_channel", None)
+        self.save(state)
+        return state
+
+    def load_company_state(self, uuid: str) -> Optional[Dict[str, Any]]:
+        data = self.load(uuid)
+        if data and data.get("is_drive_channel"):
+            return None
+        return data
+
+    def delete_company_state(self, uuid: str) -> None:
+        self.delete(uuid)
+
+    def list_company_states(self, drive_id: Optional[str]) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
         for state in self.list_states():
+            if state.get("is_drive_channel"):
+                continue
+            current_drive = state.get("drive_id")
+            if drive_id is None:
+                if current_drive is not None:
+                    continue
+            else:
+                if current_drive != drive_id:
+                    continue
+            results.append(state)
+        return results
+
+    def list_all_company_states(self) -> List[Dict[str, Any]]:
+        return [state for state in self.list_states() if not state.get("is_drive_channel")]
+
+    def _drive_state_key(self, drive_id: Optional[str]) -> str:
+        drive_key = drive_id or "root"
+        return f"drive-channel-{drive_key}"
+
+    def save_drive_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        if "drive_id" not in state:
+            raise ValueError("drive_state must include 'drive_id'")
+        drive_state = dict(state)
+        drive_state["uuid"] = self._drive_state_key(drive_state.get("drive_id"))
+        drive_state["is_drive_channel"] = True
+        self.save(drive_state)
+        return drive_state
+
+    def load_drive_state(self, drive_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        data = self.load(self._drive_state_key(drive_id))
+        if data and not data.get("is_drive_channel"):
+            return None
+        return data
+
+    def delete_drive_state(self, drive_id: Optional[str]) -> None:
+        self.delete(self._drive_state_key(drive_id))
+
+    def list_drive_states(self) -> List[Dict[str, Any]]:
+        return [state for state in self.list_states() if state.get("is_drive_channel")]
+
+    def find_drive_state_by_channel_id(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        for state in self.list_drive_states():
             if state.get("channel_id") == channel_id:
                 return state
         return None
 
-    def upsert(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        self.save(state)
-        return state
+    def find_by_channel_id(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible wrapper."""
+        return self.find_drive_state_by_channel_id(channel_id)
+
 
 
 class DriveWatchManager:
@@ -129,12 +194,6 @@ class DriveWatchManager:
         if not target_callback:
             raise ValueError("callback_url is required to register a Drive watch channel.")
 
-        existing = self.store.load(uuid)
-        is_new_channel = existing is None
-        if existing:
-            print(f"ℹ️  Existing watch for UUID {uuid} is being replaced.")
-            self.stop_watch(uuid)
-
         folder_id = extract_folder_id(drive_url)
         folder_metadata = self.drive_service.files().get(
             fileId=folder_id,
@@ -142,13 +201,80 @@ class DriveWatchManager:
             supportsAllDrives=True
         ).execute()
         drive_id = folder_metadata.get("driveId")
-        start_page_token = self._get_start_page_token(drive_id)
 
+        existing_company = self.store.load_company_state(uuid)
+        is_new_company = existing_company is None
+        preserved_trigger_ts = existing_company.get("last_job_trigger_ts") if existing_company else None
+        company_state = {
+            "uuid": uuid,
+            "drive_url": drive_url,
+            "company_name": company_name,
+            "folder_id": folder_id,
+            "drive_id": drive_id,
+            "use_embed_v4": use_embed_v4,
+            "last_job_trigger_ts": preserved_trigger_ts,
+        }
+        self.store.save_company_state(company_state)
+
+        drive_state = self._ensure_drive_channel(drive_id, target_callback)
+        response_state = {
+            "uuid": uuid,
+            "drive_id": drive_id,
+            "folder_id": folder_id,
+            "channel_id": drive_state.get("channel_id"),
+            "resource_id": drive_state.get("resource_id"),
+            "expiration": drive_state.get("expiration"),
+            "drive_channel_created": drive_state.get("is_new_channel", False),
+            "is_new_channel": is_new_company,
+        }
+        print(f"✅ Registered company {uuid} for Drive watch (drive_id={drive_id})")
+        return response_state
+
+    def save_company_state_only(
+        self,
+        uuid: str,
+        drive_url: str,
+        company_name: str = "",
+        use_embed_v4: bool = False,
+    ) -> Dict[str, Any]:
+        folder_id = extract_folder_id(drive_url)
+        folder_metadata = self.drive_service.files().get(
+            fileId=folder_id,
+            fields="id, name, driveId",
+            supportsAllDrives=True
+        ).execute()
+        drive_id = folder_metadata.get("driveId")
+        existing_company = self.store.load_company_state(uuid)
+        preserved_trigger_ts = existing_company.get("last_job_trigger_ts") if existing_company else None
+        company_state = {
+            "uuid": uuid,
+            "drive_url": drive_url,
+            "company_name": company_name,
+            "folder_id": folder_id,
+            "drive_id": drive_id,
+            "use_embed_v4": use_embed_v4,
+            "last_job_trigger_ts": preserved_trigger_ts,
+        }
+        self.store.save_company_state(company_state)
+        print(f"📝 Saved company state for UUID {uuid} (drive_id={drive_id})")
+        return company_state
+
+    def _ensure_drive_channel(self, drive_id: Optional[str], callback_url: str, force: bool = False) -> Dict[str, Any]:
+        existing = self.store.load_drive_state(drive_id)
+        if existing and force:
+            self._stop_drive_channel(existing)
+            self.store.delete_drive_state(drive_id)
+            existing = None
+        if existing:
+            existing["is_new_channel"] = False
+            return existing
+
+        start_page_token = self._get_start_page_token(drive_id)
         channel_id = str(uuid4())
         watch_body: Dict[str, Any] = {
             "id": channel_id,
             "type": "web_hook",
-            "address": target_callback,
+            "address": callback_url,
         }
         params: Dict[str, Any] = {}
         if self.ttl_seconds:
@@ -166,45 +292,105 @@ class DriveWatchManager:
             watch_params["driveId"] = drive_id
 
         response = self.drive_service.changes().watch(**watch_params).execute()
-        state = {
-            "uuid": uuid,
-            "drive_url": drive_url,
-            "company_name": company_name,
-            "folder_id": folder_id,
+        drive_state = {
             "drive_id": drive_id,
             "channel_id": channel_id,
             "resource_id": response.get("resourceId"),
             "expiration": response.get("expiration"),
             "page_token": start_page_token,
-            "use_embed_v4": use_embed_v4,
         }
-        self.store.save(state)
-        response_state = dict(state)
-        response_state["is_new_channel"] = is_new_channel
-        print(f"✅ Drive watch created for UUID {uuid} (channel: {channel_id})")
-        return response_state
+        self.store.save_drive_state(drive_state)
+        drive_state["is_new_channel"] = True
+        print(f"✅ Drive-level watch created (drive_id={drive_id}, channel={channel_id})")
+        return drive_state
 
     def stop_watch(self, uuid: str) -> Optional[Dict[str, Any]]:
-        state = self.store.load(uuid)
+        state = self.store.load_company_state(uuid)
         if not state:
             return None
-        body = {"id": state.get("channel_id"), "resourceId": state.get("resource_id")}
+
+        self.store.delete_company_state(uuid)
+        drive_id = state.get("drive_id")
+        remaining = self.store.list_company_states(drive_id)
+        drive_state: Optional[Dict[str, Any]] = None
+        if not remaining:
+            drive_state = self.store.load_drive_state(drive_id)
+            if drive_state:
+                self._stop_drive_channel(drive_state)
+                self.store.delete_drive_state(drive_id)
+        response = dict(state)
+        if drive_state:
+            response["channel_id"] = drive_state.get("channel_id")
+            response["resource_id"] = drive_state.get("resource_id")
+            response["drive_channel_stopped"] = True
+        else:
+            response["drive_channel_stopped"] = False
+        return response
+
+    def _stop_drive_channel(self, drive_state: Dict[str, Any]) -> None:
+        body = {
+            "id": drive_state.get("channel_id"),
+            "resourceId": drive_state.get("resource_id"),
+        }
         try:
             self.drive_service.channels().stop(body=body).execute()
-            print(f"🛑 Drive watch channel stopped for UUID {uuid}")
+            print(f"🛑 Drive watch channel stopped (drive_id={drive_state.get('drive_id')})")
         except HttpError as exc:
             status = getattr(exc.resp, "status", None)
             if status not in (404, 410):
                 raise
-            print(f"⚠️  Channel stop returned {status} for UUID {uuid}, continuing cleanup.")
-        self.store.delete(uuid)
-        return state
+            print(f"⚠️  Channel stop returned {status} for drive {drive_state.get('drive_id')} ({status}), continuing cleanup.")
+
+    def re_register_companies(self, uuids: Optional[List[str]] = None) -> Dict[str, Any]:
+        target_callback = self.default_callback_url
+        if not target_callback:
+            raise ValueError("callback_url is required to re-register Drive watch channels.")
+        all_states = self.store.list_all_company_states()
+        if uuids:
+            uuids_set = set(uuids)
+            company_states = [state for state in all_states if state.get("uuid") in uuids_set]
+        else:
+            company_states = all_states
+
+        if not company_states:
+            return {"processed_drive_count": 0, "details": []}
+
+        grouped: Dict[Optional[str], List[str]] = {}
+        for state in company_states:
+            drive_id = state.get("drive_id")
+            grouped.setdefault(drive_id, []).append(state["uuid"])
+
+        details = []
+        for drive_id, uuid_list in grouped.items():
+            drive_state = self._ensure_drive_channel(drive_id, target_callback, force=True)
+            details.append({
+                "drive_id": drive_id,
+                "channel_id": drive_state.get("channel_id"),
+                "uuid_count": len(uuid_list),
+                "uuids": uuid_list
+            })
+        return {"processed_drive_count": len(details), "details": details}
+
+    def delete_embedding_data(self, uuid: str) -> bool:
+        client = _build_storage_client()
+        bucket = client.bucket(self.bucket_name)
+        blob = bucket.blob(f"{uuid}.json")
+        if blob.exists():
+            blob.delete()
+            return True
+        return False
 
 
 class DriveNotificationProcessor:
     """Drive通知を処理し、必要に応じてベクトル化ジョブを再実行する。"""
 
-    def __init__(self, bucket_name: str, job_service):
+    def __init__(
+        self,
+        bucket_name: str,
+        job_service,
+        cooldown_seconds: Optional[int] = None,
+        verbose_logging: Optional[bool] = None,
+    ):
         if not bucket_name:
             raise ValueError("bucket_name is required.")
         self.bucket_name = bucket_name
@@ -212,57 +398,120 @@ class DriveNotificationProcessor:
         self.job_service = job_service
         self.drive_service = build("drive", "v3", credentials=_build_drive_credentials(), cache_discovery=False)
         self._parent_cache: Dict[str, List[str]] = {}
+        default_cooldown = os.getenv("DRIVE_WATCH_COOLDOWN_SECONDS", "").strip()
+        derived_cooldown = int(default_cooldown or "60")
+        self.cooldown_seconds = cooldown_seconds if cooldown_seconds is not None else derived_cooldown
+        if self.cooldown_seconds < 0:
+            self.cooldown_seconds = 0
+        env_verbose = os.getenv("DRIVE_WATCH_VERBOSE_LOGS", "true").strip().lower() not in {"false", "0", "no"}
+        self.verbose_logging = env_verbose if verbose_logging is None else verbose_logging
 
-    def handle_notification(self, channel_id: str, resource_state: str = "", resource_id: str = "") -> Dict[str, Any]:
-        state = self.store.find_by_channel_id(channel_id)
-        if not state:
-            print(f"⚠️  No stored state found for channel {channel_id}. Ignoring notification.")
+    def handle_notification(
+        self,
+        channel_id: str,
+        resource_state: str = "",
+        resource_id: str = "",
+        changed_types: str = "",
+    ) -> Dict[str, Any]:
+        drive_state = self.store.find_drive_state_by_channel_id(channel_id)
+        if not drive_state:
+            print(f"⚠️  No stored drive state found for channel {channel_id}. Ignoring notification.")
             return {"handled": False, "reason": "unknown_channel"}
-        print(f"📨 Drive notification received for UUID {state['uuid']} (state={resource_state}, resource={resource_id})")
+        drive_id = drive_state.get("drive_id")
+        self._log(
+            f"📨 Drive notification received for drive {drive_id} "
+            f"(state={resource_state}, resource={resource_id}, changed={changed_types})"
+        )
 
         if resource_state == "sync":
             # 初回の同期リクエストは通知チャネル作成時に必ず送られる
             return {"handled": True, "changes_found": 0, "job_triggered": False, "status": "sync"}
 
-        changes_found = self._consume_change_feed(state)
-        job_triggered = False
-        if changes_found > 0:
-            print(f"🔁 Detected {changes_found} change(s) for UUID {state['uuid']}. Triggering vectorization job.")
+        if changed_types:
+            normalized_changed = {item.strip().lower() for item in changed_types.split(",") if item.strip()}
+            if normalized_changed and "content" not in normalized_changed:
+                self._log(
+                    f"🔇 Ignoring notification for drive {drive_id} "
+                    f"because changed types do not include file content: {normalized_changed}"
+                )
+                return {"handled": True, "changes_found": 0, "job_triggered": False, "status": "filtered_changed_type"}
+
+        company_states = self.store.list_company_states(drive_id)
+        if not company_states:
+            self._log(f"ℹ️  No registered companies for drive {drive_id}.")
+            return {"handled": True, "changes_found": 0, "job_triggered": False, "status": "no_companies"}
+
+        changes = self._consume_drive_change_feed(drive_state)
+        matches = self._match_changes_to_companies(changes, company_states)
+        if not matches:
+            self._log(f"ℹ️  No relevant changes found for drive {drive_id}.")
+            return {"handled": True, "changes_found": 0, "job_triggered": False}
+
+        triggered = 0
+        now = time.time()
+        for company_state in company_states:
+            uuid = company_state["uuid"]
+            if uuid not in matches:
+                continue
+            last_trigger = company_state.get("last_job_trigger_ts")
+            try:
+                last_trigger_ts = float(last_trigger) if last_trigger is not None else None
+            except (TypeError, ValueError):
+                last_trigger_ts = None
+
+            if self.cooldown_seconds and last_trigger_ts:
+                elapsed = now - last_trigger_ts
+                if elapsed < self.cooldown_seconds:
+                    print(
+                        f"⏳ Drive watch cooldown active for UUID {uuid}: "
+                        f"{elapsed:.1f}s elapsed (cooldown {self.cooldown_seconds}s). Skipping job trigger."
+                    )
+                    continue
+
+            print(f"🔁 Detected {matches[uuid]} change(s) for UUID {uuid}. Triggering vectorization job.")
             self.job_service.trigger_vectorization_job(
-                uuid=state["uuid"],
-                drive_url=state["drive_url"],
-                use_embed_v4=state.get("use_embed_v4", False)
+                uuid=uuid,
+                drive_url=company_state["drive_url"],
+                use_embed_v4=company_state.get("use_embed_v4", False)
             )
-            job_triggered = True
-        else:
-            print(f"ℹ️  No relevant changes found for UUID {state['uuid']}.")
+            company_state["last_job_trigger_ts"] = now
+            self.store.save_company_state(company_state)
+            triggered += 1
 
-        return {"handled": True, "changes_found": changes_found, "job_triggered": job_triggered}
+        return {
+            "handled": True,
+            "changes_found": sum(matches.values()),
+            "job_triggered": triggered > 0,
+            "triggered_count": triggered,
+        }
 
-    def _consume_change_feed(self, state: Dict[str, Any]) -> int:
-        token = state.get("page_token")
+    def _log(self, message: str) -> None:
+        if self.verbose_logging:
+            print(message)
+
+    def _consume_drive_change_feed(self, drive_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        token = drive_state.get("page_token")
         if not token:
-            token = self._get_start_page_token(state.get("drive_id"))
+            token = self._get_start_page_token(drive_state.get("drive_id"))
 
-        relevant_changes = 0
+        aggregated: List[Dict[str, Any]] = []
         current_token = token
         latest_new_start: Optional[str] = None
 
         while current_token:
             try:
-                response = self._list_changes(current_token, state.get("drive_id"))
+                response = self._list_changes(current_token, drive_state.get("drive_id"))
             except HttpError as exc:
                 status = getattr(exc.resp, "status", None)
                 if status == 410:
-                    print("⚠️  Stored page token expired. Resetting to latest start token.")
-                    new_token = self._get_start_page_token(state.get("drive_id"))
-                    state["page_token"] = new_token
-                    self.store.save(state)
-                    return 0
+                    print("⚠️  Stored page token expired for drive channel. Resetting to latest start token.")
+                    new_token = self._get_start_page_token(drive_state.get("drive_id"))
+                    drive_state["page_token"] = new_token
+                    self.store.save_drive_state(drive_state)
+                    return []
                 raise
 
-            filtered = self._filter_relevant_changes(response.get("changes", []), state["folder_id"])
-            relevant_changes += len(filtered)
+            aggregated.extend(response.get("changes", []))
             current_token = response.get("nextPageToken")
             if response.get("newStartPageToken"):
                 latest_new_start = response["newStartPageToken"]
@@ -271,14 +520,29 @@ class DriveNotificationProcessor:
                 break
 
         if latest_new_start:
-            state["page_token"] = latest_new_start
+            drive_state["page_token"] = latest_new_start
         elif current_token:
-            state["page_token"] = current_token
-        elif not state.get("page_token"):
-            state["page_token"] = token
+            drive_state["page_token"] = current_token
+        elif not drive_state.get("page_token"):
+            drive_state["page_token"] = token
 
-        self.store.save(state)
-        return relevant_changes
+        self.store.save_drive_state(drive_state)
+        return aggregated
+
+    def _match_changes_to_companies(
+        self,
+        changes: List[Dict[str, Any]],
+        company_states: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
+        matches: Dict[str, int] = {}
+        for company_state in company_states:
+            folder_id = company_state.get("folder_id")
+            if not folder_id:
+                continue
+            relevant = self._filter_relevant_changes(changes, folder_id)
+            if relevant:
+                matches[company_state["uuid"]] = len(relevant)
+        return matches
 
     def _list_changes(self, page_token: str, drive_id: Optional[str]) -> Dict[str, Any]:
         params: Dict[str, Any] = {

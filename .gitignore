@@ -18,5 +18,6 @@ cloud_run_error_log.txt
 fix_cloud_build_trigger.md
 /sample_image
 prompt.md
+tools/*
 
 # test

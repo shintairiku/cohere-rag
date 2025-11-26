@@ -9,7 +9,7 @@
 import html
 import os
 import traceback
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 
 import gspread
 from google.oauth2 import service_account
@@ -50,6 +50,11 @@ class Config:
         self.drive_watch_callback_url = os.getenv("DRIVE_WEBHOOK_URL")
         ttl_value = os.getenv("DRIVE_WATCH_TTL_SECONDS", "").strip()
         self.drive_watch_ttl_seconds = int(ttl_value or "86400")
+        cooldown_value = os.getenv("DRIVE_WATCH_COOLDOWN_SECONDS", "").strip()
+        cooldown_seconds = int(cooldown_value or "60")
+        self.drive_watch_cooldown_seconds = cooldown_seconds if cooldown_seconds >= 0 else 0
+        verbose_flag = os.getenv("DRIVE_WATCH_VERBOSE_LOGS", "true").strip().lower()
+        self.drive_watch_verbose_logs = verbose_flag not in {"false", "0", "no"}
         
         self._validate_required_vars()
     
@@ -113,6 +118,31 @@ class DriveWatchRequest(BaseModel):
     company_name: str = ""
     callback_url: Optional[str] = None
     use_embed_v4: bool = False
+
+
+class CompanyState(BaseModel):
+    """スプレッドシートから送信される企業設定。"""
+    uuid: str
+    drive_url: str
+    company_name: str = ""
+    use_embed_v4: bool = False
+
+
+class CompanyStateBatchRequest(BaseModel):
+    """企業設定をまとめて保存するリクエスト。"""
+    companies: List[CompanyState]
+
+
+class DeleteCompanyStateResponse(BaseModel):
+    """企業設定削除のレスポンス。"""
+    uuid: str
+    removed_watch: bool
+    deleted_embedding: bool
+
+
+class ReRegisterRequest(BaseModel):
+    """チャネルの再登録リクエスト。"""
+    uuids: Optional[List[str]] = None
 
 
 class JobService:
@@ -287,7 +317,9 @@ def get_drive_notification_processor() -> DriveNotificationProcessor:
     if processor is None:
         processor = DriveNotificationProcessor(
             bucket_name=config.gcs_bucket_name,
-            job_service=job_service
+            job_service=job_service,
+            cooldown_seconds=config.drive_watch_cooldown_seconds,
+            verbose_logging=config.drive_watch_verbose_logs,
         )
         app.state.drive_notification_processor = processor
     return processor
@@ -332,6 +364,7 @@ async def register_drive_watch(request: DriveWatchRequest):
             "expiration": state.get("expiration"),
             "drive_id": state.get("drive_id"),
             "is_new_channel": state.get("is_new_channel", False),
+            "drive_channel_created": state.get("drive_channel_created", False),
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -353,18 +386,80 @@ async def delete_drive_watch(uuid: str):
     }
 
 
+@app.post("/drive/company-states")
+async def save_company_states(request: CompanyStateBatchRequest):
+    """スプレッドシートから送信された企業設定を保存する。"""
+    manager = get_drive_watch_manager()
+    saved: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for company in request.companies:
+        try:
+            state = manager.save_company_state_only(
+                uuid=company.uuid,
+                drive_url=company.drive_url,
+                company_name=company.company_name,
+                use_embed_v4=company.use_embed_v4,
+            )
+            saved.append({
+                "uuid": company.uuid,
+                "drive_id": state.get("drive_id"),
+                "folder_id": state.get("folder_id"),
+            })
+        except Exception as exc:
+            errors.append({"uuid": company.uuid, "error": str(exc)})
+    if not saved and errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+    return {
+        "saved_count": len(saved),
+        "saved": saved,
+        "error_count": len(errors),
+        "errors": errors,
+    }
+
+
+@app.delete("/drive/company-states/{uuid}", response_model=DeleteCompanyStateResponse)
+async def delete_company_state(uuid: str):
+    """企業設定と関連する紐づけを削除する。"""
+    manager = get_drive_watch_manager()
+    state = manager.stop_watch(uuid)
+    embedding_deleted = manager.delete_embedding_data(uuid)
+    if not state and not embedding_deleted:
+        raise HTTPException(status_code=404, detail=f"No company state found for UUID {uuid}")
+    removed_watch = bool(state)
+    return DeleteCompanyStateResponse(
+        uuid=uuid,
+        removed_watch=removed_watch,
+        deleted_embedding=embedding_deleted,
+    )
+
+
+@app.post("/drive/watch/re-register")
+async def re_register_drive_channels(request: Optional[ReRegisterRequest] = None):
+    """既存企業のチャネルを共有ドライブ単位で再登録する。"""
+    manager = get_drive_watch_manager()
+    payload = request or ReRegisterRequest()
+    try:
+        result = manager.re_register_companies(payload.uuids)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to re-register Drive channels: {exc}")
+
+
 @app.post("/drive/notifications", status_code=204)
 async def drive_notifications(request: Request):
     """Google Drive APIからのpush通知を受信し、必要に応じてジョブを再実行する。"""
     channel_id = request.headers.get("x-goog-channel-id")
     resource_state = request.headers.get("x-goog-resource-state", "")
     resource_id = request.headers.get("x-goog-resource-id", "")
+    changed_types = request.headers.get("x-goog-changed", "")
     if not channel_id:
         raise HTTPException(status_code=400, detail="Missing X-Goog-Channel-Id header.")
 
     processor = get_drive_notification_processor()
     try:
-        processor.handle_notification(channel_id, resource_state, resource_id)
+        processor.handle_notification(channel_id, resource_state, resource_id, changed_types)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to handle Drive notification: {exc}")
     return Response(status_code=204)

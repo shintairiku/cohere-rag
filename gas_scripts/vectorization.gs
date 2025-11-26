@@ -1,182 +1,4 @@
 /**
- * @fileoverview ベクトル化リクエストとUUID生成系の処理。
- */
-
-function callVectorizeApi() {
-  const ui = SpreadsheetApp.getUi();
-  const activeSheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  if (activeSheet.getName() !== Config.COMPANY_LIST.SHEET_NAME) {
-    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートから実行してください。`);
-    return;
-  }
-  
-  const activeRange = activeSheet.getActiveRange();
-  const row = activeRange.getRow();
-  if (row < 2) {
-    ui.alert("ヘッダー行ではなく、対象の会社の行を選択してください。");
-    return;
-  }
-
-  try {
-    const rowData = activeSheet.getRange(row, 1, 1, 3).getValues()[0];
-    const uuid = rowData[Config.COMPANY_LIST.UUID_COL - 1];
-    const driveUrl = rowData[Config.COMPANY_LIST.DRIVE_URL_COL - 1];
-
-    if (!uuid || !driveUrl) throw new Error("UUIDまたはGoogleドライブのURLが空です。");
-    const companyName = rowData[Config.COMPANY_LIST.NAME_COL - 1];
-    const useEmbedV4 = companyName && companyName.includes("embed-v4.0");
-    const payload = JSON.stringify({ 
-      "uuid": uuid, 
-      "drive_url": driveUrl,
-      "use_embed_v4": useEmbedV4
-    });
-    const params = {
-      method: "post",
-      contentType: "application/json",
-      headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
-      payload: payload,
-      muteHttpExceptions: true,
-    };
-    const apiUrl = `${Config.API_BASE_URL}/vectorize`;
-    const response = UrlFetchApp.fetch(apiUrl, params);
-    const responseCode = response.getResponseCode();
-    if (responseCode === 202) {
-      ui.alert("ベクトル化ジョブの開始をリクエストしました。処理には時間がかかります。");
-    } else {
-      Logger.log(`API Error Response (${responseCode}): ${response.getContentText()}`);
-      throw new Error(`APIエラーが発生しました (コード: ${responseCode})`);
-    }
-  } catch (error) {
-    ui.alert(`エラー: ${error.message}`);
-    Logger.log(`[callVectorizeApi] Error: ${error.toString()}`);
-  }
-}
-
-/**
- * 優先企業リストのチェックボックスがONの企業を一括でベクトル化する
- */
-function vectorizePriorityCompanies() {
-  const ui = SpreadsheetApp.getUi();
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
-  if (!sheet) {
-    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    ui.alert('ベクトル化対象の企業がありません。');
-    return;
-  }
-
-  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
-  const values = range.getValues();
-  
-  const companiesToVectorize = [];
-  for (let i = 0; i < values.length; i++) {
-    const isPriority = values[i][Config.COMPANY_LIST.PRIORITY_COL - 1];
-    if (isPriority === true) {
-      const companyName = values[i][Config.COMPANY_LIST.NAME_COL - 1];
-      const uuid = values[i][Config.COMPANY_LIST.UUID_COL - 1];
-      const driveUrl = values[i][Config.COMPANY_LIST.DRIVE_URL_COL - 1];
-      if (companyName && uuid && driveUrl) {
-        companiesToVectorize.push({ name: companyName, uuid: uuid, driveUrl: driveUrl });
-      }
-    }
-  }
-
-  if (companiesToVectorize.length === 0) {
-    ui.alert('優先企業にチェックが入っている企業がありません。');
-    return;
-  }
-
-  let successCount = 0;
-  let failureCount = 0;
-  const errors = [];
-  SpreadsheetApp.getActiveSpreadsheet().toast(`ベクトル化処理を開始します... (${companiesToVectorize.length}件)`, "処理中", -1);
-
-  for (let i = 0; i < companiesToVectorize.length; i++) {
-    const company = companiesToVectorize[i];
-    SpreadsheetApp.getActiveSpreadsheet().toast(`処理中... (${i + 1}/${companiesToVectorize.length}): ${company.name}`, "処理中", -1);
-    try {
-      const useEmbedV4 = company.name && company.name.includes("embed-v4.0");
-      const payload = JSON.stringify({ 
-        "uuid": company.uuid, 
-        "drive_url": company.driveUrl,
-        "use_embed_v4": useEmbedV4
-      });
-      const params = {
-        method: "post",
-        contentType: "application/json",
-        headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
-        payload: payload,
-        muteHttpExceptions: true,
-      };
-      const apiUrl = `${Config.API_BASE_URL}/vectorize`;
-      const response = UrlFetchApp.fetch(apiUrl, params);
-      const responseCode = response.getResponseCode();
-      if (responseCode === 202) {
-        successCount++;
-        Logger.log(`Successfully requested vectorization for ${company.name}`);
-      } else {
-        failureCount++;
-        const errorMessage = `Failed to vectorize ${company.name} (Code: ${responseCode}): ${response.getContentText()}`;
-        errors.push(errorMessage);
-        Logger.log(errorMessage);
-      }
-    } catch (error) {
-      failureCount++;
-      const errorMessage = `Error vectorizing ${company.name}: ${error.message}`;
-      errors.push(errorMessage);
-      Logger.log(errorMessage);
-    }
-    
-    if (i < companiesToVectorize.length - 1) {
-      Utilities.sleep(3000); // 3秒待機
-    }
-  }
-
-  SpreadsheetApp.getActiveSpreadsheet().toast("一括ベクトル化処理が完了しました。", "完了", 5);
-  let resultMessage = `一括ベクトル化処理が完了しました。\n\n成功: ${successCount}件\n失敗: ${failureCount}件`;
-  if (failureCount > 0) {
-    resultMessage += "\n\nエラー詳細:\n" + errors.join("\n");
-  }
-  ui.alert(resultMessage);
-}
-
-
-function generateUuids() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
-  if (!sheet) {
-    SpreadsheetApp.getUi().alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return;
-
-  const range = sheet.getRange(2, Config.COMPANY_LIST.UUID_COL, lastRow - 1, Config.COMPANY_LIST.NAME_COL);
-  const values = range.getValues();
-  let updated = false;
-
-  for (let i = 0; i < values.length; i++) {
-    const uuid = values[i][0];
-    const companyName = values[i][Config.COMPANY_LIST.NAME_COL - 1];
-    if (companyName && !uuid) {
-      values[i][0] = Utilities.getUuid();
-      updated = true;
-    }
-  }
-
-  if (updated) {
-    range.setValues(values);
-    SpreadsheetApp.getUi().alert('空だったUUIDを生成しました。');
-  } else {
-    SpreadsheetApp.getUi().alert('UUIDが空の行はありませんでした。');
-  }
-}
-
-/**
  * 優先企業に対してDrive変更通知チャネルの登録を行い、初回はベクトル化も実行する。
  */
 function registerDriveWatchForPriorityCompanies() {
@@ -323,4 +145,268 @@ function triggerVectorizeJob_(uuid, driveUrl, useEmbedV4) {
   }
   const responseText = response.getContentText() || "";
   throw new Error(`ベクトル化APIエラー (コード: ${responseCode}) ${responseText}`);
+}
+
+/**
+ * 優先企業の設定をAPIに送信し、drive-watch-statesへ保存させる。
+ */
+function savePriorityCompanyStates() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
+  if (!sheet) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    ui.alert('優先企業にチェックが入った行がありません。');
+    return;
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
+  const values = range.getValues();
+  const companies = [];
+  const errors = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const rowNumber = i + 2;
+    const row = values[i];
+    const isPriority = row[Config.COMPANY_LIST.PRIORITY_COL - 1];
+    if (isPriority !== true) {
+      continue;
+    }
+
+    let uuid = row[Config.COMPANY_LIST.UUID_COL - 1];
+    const companyName = row[Config.COMPANY_LIST.NAME_COL - 1];
+    const driveUrl = row[Config.COMPANY_LIST.DRIVE_URL_COL - 1];
+    if (!companyName || !driveUrl) {
+      errors.push(`Row ${rowNumber}: 会社名またはドライブURLが空です。`);
+      continue;
+    }
+    if (!uuid) {
+      uuid = Utilities.getUuid();
+      sheet.getRange(rowNumber, Config.COMPANY_LIST.UUID_COL).setValue(uuid);
+    }
+    const useEmbedV4 = companyName.indexOf("embed-v4.0") !== -1;
+    companies.push({
+      uuid: uuid,
+      company_name: companyName,
+      drive_url: driveUrl,
+      use_embed_v4: useEmbedV4
+    });
+  }
+
+  if (companies.length === 0) {
+    ui.alert('優先企業にチェックが入っている有効な行がありません。');
+    return;
+  }
+
+  try {
+    const result = syncCompanyStates_(companies);
+    let message = `保存に成功: ${result.saved_count || 0}件`;
+    if ((result.error_count || 0) > 0) {
+      message += `\n失敗: ${result.error_count}件`;
+      if (result.errors && result.errors.length) {
+        const detail = result.errors.slice(0, 5).map(err => `${err.uuid || 'unknown'}: ${err.error || err}`);
+        message += `\n例: ${detail.join(", ")}`;
+      }
+    }
+    if (errors.length > 0) {
+      message += `\nスキップ: ${errors.length}件`;
+    }
+    ui.alert(message);
+  } catch (err) {
+    ui.alert(`保存に失敗しました: ${err.message}`);
+  }
+}
+
+function syncCompanyStates_(companies) {
+  const payload = JSON.stringify({ companies: companies });
+  const params = {
+    method: "post",
+    contentType: "application/json",
+    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+    payload: payload,
+    muteHttpExceptions: true,
+  };
+  const apiUrl = `${Config.API_BASE_URL}/drive/company-states`;
+  const response = UrlFetchApp.fetch(apiUrl, params);
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText() || "";
+  if (responseCode >= 200 && responseCode < 300) {
+    try {
+      return JSON.parse(responseText);
+    } catch (err) {
+      return { saved_count: companies.length, error_count: 0 };
+    }
+  }
+  throw new Error(`APIエラー (コード: ${responseCode}) ${responseText}`);
+}
+
+/**
+ * 優先企業のDrive watch登録と企業リスト同期をまとめて実行する。
+ */
+function syncDriveAndDbForPriorityCompanies() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(Config.COMPANY_LIST.SHEET_NAME);
+  if (!sheet) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートが見つかりません。`);
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    ui.alert('優先企業にチェックが入った行がありません。');
+    return;
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, Config.COMPANY_LIST.PRIORITY_COL);
+  const values = range.getValues();
+
+  const companiesForState = [];
+  let registerSuccess = 0;
+  const registerErrors = [];
+  const validationErrors = [];
+
+  ss.toast('連携処理を開始します...', '処理中', -1);
+
+  for (let i = 0; i < values.length; i++) {
+    const rowNumber = i + 2;
+    const row = values[i];
+    const isPriority = row[Config.COMPANY_LIST.PRIORITY_COL - 1];
+    if (isPriority !== true) continue;
+
+    let uuid = row[Config.COMPANY_LIST.UUID_COL - 1];
+    const companyName = row[Config.COMPANY_LIST.NAME_COL - 1];
+    const driveUrl = row[Config.COMPANY_LIST.DRIVE_URL_COL - 1];
+
+    if (!companyName || !driveUrl) {
+      validationErrors.push(`Row ${rowNumber}: 会社名またはドライブURLが空です。`);
+      continue;
+    }
+
+    if (!uuid) {
+      uuid = Utilities.getUuid();
+      sheet.getRange(rowNumber, Config.COMPANY_LIST.UUID_COL).setValue(uuid);
+    }
+
+    const useEmbedV4 = companyName.indexOf("embed-v4.0") !== -1;
+
+    let watchResult;
+    try {
+      watchResult = registerDriveWatch_(uuid, driveUrl, companyName, useEmbedV4);
+      registerSuccess++;
+    } catch (err) {
+      registerErrors.push(`Row ${rowNumber} (${companyName}): ${err.message}`);
+      continue;
+    }
+
+    if (watchResult && watchResult.is_new_channel) {
+      try {
+        triggerVectorizeJob_(uuid, driveUrl, useEmbedV4);
+      } catch (vectorErr) {
+        registerErrors.push(`Row ${rowNumber} (${companyName}): ベクトル化に失敗しました - ${vectorErr.message}`);
+      }
+    }
+
+    companiesForState.push({
+      uuid: uuid,
+      company_name: companyName,
+      drive_url: driveUrl,
+      use_embed_v4: useEmbedV4
+    });
+  }
+
+  let stateResult = null;
+  if (companiesForState.length > 0) {
+    try {
+      stateResult = syncCompanyStates_(companiesForState);
+    } catch (err) {
+      registerErrors.push(`企業リスト保存中にエラー: ${err.message}`);
+    }
+  }
+
+  ss.toast('連携処理が完了しました。', '完了', 5);
+
+  let message = `変更通知登録 成功: ${registerSuccess}件`;
+  if (registerErrors.length > 0) {
+    message += `\n登録に失敗: ${registerErrors.length}件`;
+  }
+  if (stateResult) {
+    message += `\n企業リスト保存 成功: ${stateResult.saved_count || 0}件`;
+    if ((stateResult.error_count || 0) > 0) {
+      message += `, 失敗: ${stateResult.error_count}件`;
+    }
+  }
+  if (validationErrors.length > 0) {
+    message += `\nスキップ: ${validationErrors.length}件`;
+  }
+
+  const detail = [].concat(registerErrors.slice(0, 5), validationErrors.slice(0, 5));
+  if (detail.length > 0) {
+    message += `\n例: ${detail.join("; ")}`;
+  }
+
+  ui.alert(message);
+}
+
+/**
+ * 選択行のDrive変更通知チャネルを削除する。
+ */
+function removeDriveWatchForSelectedRow() {
+  const ui = SpreadsheetApp.getUi();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() !== Config.COMPANY_LIST.SHEET_NAME) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートで行を選択してください。`);
+    return;
+  }
+
+  const range = sheet.getActiveRange();
+  const row = range.getRow();
+  if (row < 2) {
+    ui.alert('ヘッダーではなく、対象の会社行を選択してください。');
+    return;
+  }
+
+  const uuid = sheet.getRange(row, Config.COMPANY_LIST.UUID_COL).getValue();
+  const companyName = sheet.getRange(row, Config.COMPANY_LIST.NAME_COL).getValue() || '(名称未設定)';
+  if (!uuid) {
+    ui.alert('この行にはUUIDが設定されていません。');
+    return;
+  }
+
+  const confirmed = ui.alert(
+    '確認',
+    `「${companyName}」との紐づけを解除し、関連データを削除しますか？`,
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmed !== ui.Button.YES) {
+    return;
+  }
+
+  try {
+    deleteCompanyBinding_(uuid);
+    ui.alert('紐づけを解除し、関連データを削除しました。');
+  } catch (err) {
+    ui.alert(`削除に失敗しました: ${err.message}`);
+  }
+}
+
+function deleteCompanyBinding_(uuid) {
+  const params = {
+    method: "delete",
+    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+    muteHttpExceptions: true,
+  };
+  const apiUrl = `${Config.API_BASE_URL}/drive/company-states/${encodeURIComponent(uuid)}`;
+  const response = UrlFetchApp.fetch(apiUrl, params);
+  const responseCode = response.getResponseCode();
+  if (responseCode >= 200 && responseCode < 300) {
+    return true;
+  }
+  const responseText = response.getContentText() || "";
+  throw new Error(`紐づけ削除APIエラー (コード: ${responseCode}) ${responseText}`);
 }
