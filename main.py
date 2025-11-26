@@ -133,6 +133,12 @@ class CompanyStateBatchRequest(BaseModel):
     companies: List[CompanyState]
 
 
+class DeleteCompanyStateResponse(BaseModel):
+    """企業設定削除のレスポンス。"""
+    uuid: str
+    removed_watch: bool
+
+
 class ReRegisterRequest(BaseModel):
     """チャネルの再登録リクエスト。"""
     uuids: Optional[List[str]] = None
@@ -408,6 +414,16 @@ async def save_company_states(request: CompanyStateBatchRequest):
         "error_count": len(errors),
         "errors": errors,
     }
+
+
+@app.delete("/drive/company-states/{uuid}", response_model=DeleteCompanyStateResponse)
+async def delete_company_state(uuid: str):
+    """企業設定と関連する紐づけを削除する。"""
+    manager = get_drive_watch_manager()
+    state = manager.stop_watch(uuid)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"No company state found for UUID {uuid}")
+    return DeleteCompanyStateResponse(uuid=uuid, removed_watch=state.get("drive_channel_stopped", False))
 
 
 @app.post("/drive/watch/re-register")

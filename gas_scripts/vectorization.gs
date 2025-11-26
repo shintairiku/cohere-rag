@@ -343,3 +343,78 @@ function syncDriveAndDbForPriorityCompanies() {
 
   ui.alert(message);
 }
+
+/**
+ * 選択行のDrive変更通知チャネルを削除する。
+ */
+function removeDriveWatchForSelectedRow() {
+  const ui = SpreadsheetApp.getUi();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() !== Config.COMPANY_LIST.SHEET_NAME) {
+    ui.alert(`'${Config.COMPANY_LIST.SHEET_NAME}'シートで行を選択してください。`);
+    return;
+  }
+
+  const range = sheet.getActiveRange();
+  const row = range.getRow();
+  if (row < 2) {
+    ui.alert('ヘッダーではなく、対象の会社行を選択してください。');
+    return;
+  }
+
+  const uuid = sheet.getRange(row, Config.COMPANY_LIST.UUID_COL).getValue();
+  const companyName = sheet.getRange(row, Config.COMPANY_LIST.NAME_COL).getValue() || '(名称未設定)';
+  if (!uuid) {
+    ui.alert('この行にはUUIDが設定されていません。');
+    return;
+  }
+
+  const confirmed = ui.alert(
+    '確認',
+    `「${companyName}」との紐づけを解除し、関連データを削除しますか？`,
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmed !== ui.Button.YES) {
+    return;
+  }
+
+  try {
+    deleteDriveWatch_(uuid);
+    removeCompanyData_(uuid);
+    ui.alert('紐づけを解除し、関連データを削除しました。');
+  } catch (err) {
+    ui.alert(`削除に失敗しました: ${err.message}`);
+  }
+}
+
+function deleteDriveWatch_(uuid) {
+  const params = {
+    method: "delete",
+    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+    muteHttpExceptions: true,
+  };
+  const apiUrl = `${Config.API_BASE_URL}/drive/watch/${encodeURIComponent(uuid)}`;
+  const response = UrlFetchApp.fetch(apiUrl, params);
+  const responseCode = response.getResponseCode();
+  if (responseCode >= 200 && responseCode < 300) {
+    return true;
+  }
+  const responseText = response.getContentText() || "";
+  throw new Error(`APIエラー (コード: ${responseCode}) ${responseText}`);
+}
+
+function removeCompanyData_(uuid) {
+  const params = {
+    method: "delete",
+    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
+    muteHttpExceptions: true,
+  };
+  const apiUrl = `${Config.API_BASE_URL}/drive/company-states/${encodeURIComponent(uuid)}`;
+  const response = UrlFetchApp.fetch(apiUrl, params);
+  const responseCode = response.getResponseCode();
+  if (responseCode >= 200 && responseCode < 300) {
+    return true;
+  }
+  const responseText = response.getContentText() || "";
+  throw new Error(`データ削除APIエラー (コード: ${responseCode}) ${responseText}`);
+}
