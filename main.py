@@ -411,11 +411,12 @@ async def save_company_states(request: CompanyStateBatchRequest):
 
 
 @app.post("/drive/watch/re-register")
-async def re_register_drive_channels(request: ReRegisterRequest):
+async def re_register_drive_channels(request: Optional[ReRegisterRequest] = None):
     """既存企業のチャネルを共有ドライブ単位で再登録する。"""
     manager = get_drive_watch_manager()
+    payload = request or ReRegisterRequest()
     try:
-        result = manager.re_register_companies(request.uuids)
+        result = manager.re_register_companies(payload.uuids)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
