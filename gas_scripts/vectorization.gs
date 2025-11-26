@@ -295,12 +295,21 @@ function syncDriveAndDbForPriorityCompanies() {
 
     const useEmbedV4 = companyName.indexOf("embed-v4.0") !== -1;
 
+    let watchResult;
     try {
-      registerDriveWatch_(uuid, driveUrl, companyName, useEmbedV4);
+      watchResult = registerDriveWatch_(uuid, driveUrl, companyName, useEmbedV4);
       registerSuccess++;
     } catch (err) {
       registerErrors.push(`Row ${rowNumber} (${companyName}): ${err.message}`);
       continue;
+    }
+
+    if (watchResult && watchResult.is_new_channel) {
+      try {
+        triggerVectorizeJob_(uuid, driveUrl, useEmbedV4);
+      } catch (vectorErr) {
+        registerErrors.push(`Row ${rowNumber} (${companyName}): ベクトル化に失敗しました - ${vectorErr.message}`);
+      }
     }
 
     companiesForState.push({
