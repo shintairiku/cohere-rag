@@ -137,6 +137,7 @@ class DeleteCompanyStateResponse(BaseModel):
     """企業設定削除のレスポンス。"""
     uuid: str
     removed_watch: bool
+    deleted_embedding: bool
 
 
 class ReRegisterRequest(BaseModel):
@@ -421,9 +422,15 @@ async def delete_company_state(uuid: str):
     """企業設定と関連する紐づけを削除する。"""
     manager = get_drive_watch_manager()
     state = manager.stop_watch(uuid)
-    if not state:
+    embedding_deleted = manager.delete_embedding_data(uuid)
+    if not state and not embedding_deleted:
         raise HTTPException(status_code=404, detail=f"No company state found for UUID {uuid}")
-    return DeleteCompanyStateResponse(uuid=uuid, removed_watch=state.get("drive_channel_stopped", False))
+    removed_watch = bool(state)
+    return DeleteCompanyStateResponse(
+        uuid=uuid,
+        removed_watch=removed_watch,
+        deleted_embedding=embedding_deleted,
+    )
 
 
 @app.post("/drive/watch/re-register")

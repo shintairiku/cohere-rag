@@ -379,31 +379,14 @@ function removeDriveWatchForSelectedRow() {
   }
 
   try {
-    deleteDriveWatch_(uuid);
-    removeCompanyData_(uuid);
+    deleteCompanyBinding_(uuid);
     ui.alert('紐づけを解除し、関連データを削除しました。');
   } catch (err) {
     ui.alert(`削除に失敗しました: ${err.message}`);
   }
 }
 
-function deleteDriveWatch_(uuid) {
-  const params = {
-    method: "delete",
-    headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
-    muteHttpExceptions: true,
-  };
-  const apiUrl = `${Config.API_BASE_URL}/drive/watch/${encodeURIComponent(uuid)}`;
-  const response = UrlFetchApp.fetch(apiUrl, params);
-  const responseCode = response.getResponseCode();
-  if (responseCode >= 200 && responseCode < 300) {
-    return true;
-  }
-  const responseText = response.getContentText() || "";
-  throw new Error(`APIエラー (コード: ${responseCode}) ${responseText}`);
-}
-
-function removeCompanyData_(uuid) {
+function deleteCompanyBinding_(uuid) {
   const params = {
     method: "delete",
     headers: { "Authorization": "Bearer " + ScriptApp.getIdentityToken() },
@@ -416,5 +399,5 @@ function removeCompanyData_(uuid) {
     return true;
   }
   const responseText = response.getContentText() || "";
-  throw new Error(`データ削除APIエラー (コード: ${responseCode}) ${responseText}`);
+  throw new Error(`紐づけ削除APIエラー (コード: ${responseCode}) ${responseText}`);
 }

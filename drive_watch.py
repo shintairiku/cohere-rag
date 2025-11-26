@@ -371,6 +371,15 @@ class DriveWatchManager:
             })
         return {"processed_drive_count": len(details), "details": details}
 
+    def delete_embedding_data(self, uuid: str) -> bool:
+        client = _build_storage_client()
+        bucket = client.bucket(self.bucket_name)
+        blob = bucket.blob(f"{uuid}.json")
+        if blob.exists():
+            blob.delete()
+            return True
+        return False
+
 
 class DriveNotificationProcessor:
     """Drive通知を処理し、必要に応じてベクトル化ジョブを再実行する。"""
