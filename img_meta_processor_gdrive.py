@@ -99,28 +99,39 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> Tuple[Optiona
         
         MAX_PIXELS = 2_300_000
         
-        if original_pixels <= MAX_PIXELS:
+        is_pixel_heavy = original_pixels > MAX_PIXELS
+        is_size_heavy = len(image_content) > MAX_FILE_SIZE_BYTES
+
+        if not is_pixel_heavy and not is_size_heavy:
             return image_content, None
-        
-        print(f"    📏 高解像度画像を検出: {original_width}x{original_height} ({original_pixels:,} pixels > {MAX_PIXELS:,})")
-        print(f"       ファイルサイズ: {original_size_mb:.1f}MB")
+
+        if is_pixel_heavy:
+            print(f"    📏 高解像度画像を検出: {original_width}x{original_height} ({original_pixels:,} pixels > {MAX_PIXELS:,})")
+            print(f"       ファイルサイズ: {original_size_mb:.1f}MB")
+        elif is_size_heavy:
+            print(f"    🧼 ファイルサイズが {original_size_mb:.1f}MB と上限を超過しています。JPEG再圧縮を実施します。")
         
         if img.mode in ('RGBA', 'LA', 'P'):
             background = PILImage.new('RGB', img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[-1] if 'A' in img.mode else None)
             img = background
 
-        scale_factor = (MAX_PIXELS / original_pixels) ** 0.5
-        scale_factor = max(0.3, scale_factor)
-        
-        new_width = int(original_width * scale_factor)
-        new_height = int(original_height * scale_factor)
-        new_pixels = new_width * new_height
-        
-        print(f"    🔢 縮小スケール: {scale_factor:.3f}")
-        print(f"       変換後の解像度: {new_width}x{new_height} ({new_pixels:,} pixels)")
-        
-        resized_img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
+        new_width = original_width
+        new_height = original_height
+        resized_img = img
+
+        if is_pixel_heavy:
+            scale_factor = (MAX_PIXELS / original_pixels) ** 0.5
+            scale_factor = max(0.3, scale_factor)
+            
+            new_width = int(original_width * scale_factor)
+            new_height = int(original_height * scale_factor)
+            new_pixels = new_width * new_height
+            
+            print(f"    🔢 縮小スケール: {scale_factor:.3f}")
+            print(f"       変換後の解像度: {new_width}x{new_height} ({new_pixels:,} pixels)")
+            
+            resized_img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
         
         output = io.BytesIO()
         resized_img.save(output, format='JPEG', quality=90, optimize=True)
@@ -128,8 +139,23 @@ def resize_image_if_needed(image_content: bytes, filename: str) -> Tuple[Optiona
         resized_size_mb = len(resized_data) / (1024 * 1024)
         
         quality = 90
-        while len(resized_data) > MAX_FILE_SIZE_BYTES and quality >= 60:
-            quality -= 10
+        MIN_QUALITY = 10
+        SCALE_STEP = 0.9
+        while len(resized_data) > MAX_FILE_SIZE_BYTES:
+            if quality > MIN_QUALITY:
+                quality = max(MIN_QUALITY, quality - 10)
+            else:
+                scaled_width = max(1, int(new_width * SCALE_STEP))
+                scaled_height = max(1, int(new_height * SCALE_STEP))
+                if scaled_width == new_width:
+                    scaled_width = max(1, new_width - 1)
+                if scaled_height == new_height:
+                    scaled_height = max(1, new_height - 1)
+                if scaled_width == new_width and scaled_height == new_height:
+                    print(f"    ⚠️  {filename} は最小サイズまで縮小しても制限を下回りませんでした。")
+                    return None, "size_limit"
+                new_width, new_height = scaled_width, scaled_height
+                resized_img = resized_img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
             output = io.BytesIO()
             resized_img.save(output, format='JPEG', quality=quality, optimize=True)
             resized_data = output.getvalue()
